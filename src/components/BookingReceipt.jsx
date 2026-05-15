@@ -1,6 +1,44 @@
-import { useRef, useCallback } from "react";
+import { useCallback } from "react";
 import { jsPDF } from "jspdf";
 import { Printer, Download, X } from "lucide-react";
+
+function escapeHtml(s) {
+  return String(s ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+/** Printable HTML built from data — does not rely on DOM refs (fixes blank print window in Edge). */
+function buildBookingReceiptPrintHtml(receipt) {
+  const r = receipt;
+  const changeRow =
+    r.change != null && r.paymentMethodLabel === "Cash"
+      ? `<tr><td>Change</td><td class="right">₱${Number(r.change).toFixed(2)}</td></tr>`
+      : "";
+  return `
+    <h4>PicklePro</h4>
+    <p class="sub">Court booking receipt</p>
+    <p class="id">ID: ${escapeHtml(r.transactionId)}</p>
+    <table>
+      <tbody>
+        <tr><td>Date</td><td class="right">${escapeHtml(r.date)}</td></tr>
+        <tr><td>Time</td><td class="right">${escapeHtml(r.timeSlot)}</td></tr>
+        <tr><td>Court</td><td class="right">${escapeHtml(r.courtName)}</td></tr>
+        <tr><td>Duration</td><td class="right">${escapeHtml(String(r.duration))} hr</td></tr>
+        <tr><td>Player</td><td class="right">${escapeHtml(r.playerName)}</td></tr>
+        <tr><td>Method</td><td class="right">${escapeHtml(r.paymentMethodLabel)}</td></tr>
+        <tr><td>Plan</td><td class="right">${escapeHtml(r.paymentPlanLabel)}</td></tr>
+        <tr><td>Total</td><td class="right total">₱${Number(r.totalAmount).toFixed(2)}</td></tr>
+        <tr><td>Amount paid</td><td class="right">₱${Number(r.amountPaid).toFixed(2)}</td></tr>
+        <tr><td>Balance</td><td class="right">₱${Number(r.remainingBalance).toFixed(2)}</td></tr>
+        ${changeRow}
+      </tbody>
+    </table>
+    <p class="status">${escapeHtml(String(r.customerPayStatus))}</p>
+  `;
+}
 
 /**
  * @typedef {object} ReceiptModel
@@ -30,30 +68,59 @@ function statusBadgeClass(status) {
  * @param {{ receipt: ReceiptModel, onDismiss?: () => void, className?: string }} props
  */
 export default function BookingReceipt({ receipt, onDismiss, className = "" }) {
-  const printRef = useRef(null);
-
   const handlePrint = useCallback(() => {
-    const w = window.open("", "_blank", "noopener,noreferrer,width=420,height=720");
-    if (!w) return;
-    const node = printRef.current;
-    if (!node) return;
-    w.document.write(
-      `<!DOCTYPE html><html><head><meta charset="utf-8"/><title>Receipt ${receipt.transactionId}</title>
+    // Omit noopener: some browsers (Edge) block document.write on opaque opener windows → blank tab.
+    const w = window.open("", "_blank", "width=480,height=720");
+    if (!w) {
+      window.alert("Pop-up blocked. Allow pop-ups for this site to print.");
+      return;
+    }
+    const bodyInner = buildBookingReceiptPrintHtml(receipt);
+    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"/><title>Receipt ${escapeHtml(receipt.transactionId)}</title>
       <style>
-        body{margin:0;padding:24px;background:#0f172a;color:#e2e8f0;font:14px system-ui,sans-serif;}
-        h1{font-size:18px;margin:0 0 4px;color:#fff;}
-        .muted{color:#94a3b8;font-size:12px;margin-bottom:20px;}
+        @page { margin: 12mm; }
+        body{margin:0;padding:24px;background:#fff;color:#0f172a;font:14px system-ui,sans-serif;}
+        h4{font-size:18px;margin:0;color:#0f172a;}
+        .sub{color:#64748b;font-size:12px;margin:4px 0 8px;}
+        .id{color:#64748b;font-size:11px;font-family:ui-monospace;word-break:break-all;margin-bottom:16px;}
         table{width:100%;border-collapse:collapse;}
-        td{padding:8px 0;border-bottom:1px solid #334155;}
-        td:first-child{color:#94a3b8;width:42%;}
-        .total{font-weight:700;color:#4ade80;}
-      </style></head><body>${node.innerHTML}</body></html>`
-    );
+        td{padding:8px 0;border-bottom:1px solid #e2e8f0;}
+        td:first-child{color:#64748b;width:42%;}
+        td.right{text-align:right;font-weight:500;}
+        .total{font-weight:700;color:#15803d;}
+        .status{margin-top:16px;text-align:right;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:#475569;}
+      </style></head><body>${bodyInner}</body></html>`;
+    w.document.open();
+    w.document.write(html);
     w.document.close();
-    w.focus();
-    w.print();
-    w.close();
-  }, [receipt.transactionId]);
+    const runPrint = () => {
+      try {
+        w.focus();
+        w.print();
+      } finally {
+        w.addEventListener(
+          "afterprint",
+          () => {
+            try {
+              w.close();
+            } catch {
+              /* ignore */
+            }
+          },
+          { once: true }
+        );
+        setTimeout(() => {
+          try {
+            if (!w.closed) w.close();
+          } catch {
+            /* ignore */
+          }
+        }, 2000);
+      }
+    };
+    // Let Edge/Chromium finish parsing before print dialog
+    setTimeout(runPrint, 100);
+  }, [receipt]);
 
   const handlePdf = useCallback(() => {
     const doc = new jsPDF({ unit: "pt", format: "a4" });
@@ -127,10 +194,7 @@ export default function BookingReceipt({ receipt, onDismiss, className = "" }) {
         </div>
       </div>
 
-      <div
-        ref={printRef}
-        className="booking-receipt-print-root rounded-xl border border-slate-700 bg-slate-900/60 p-5 text-left text-sm"
-      >
+      <div className="booking-receipt-print-root rounded-xl border border-slate-700 bg-slate-900/60 p-5 text-left text-sm">
         <h4 className="text-lg font-bold text-white m-0">PicklePro</h4>
         <p className="text-slate-500 text-xs mt-1 mb-4">Court booking receipt</p>
         <p className="text-slate-400 text-xs font-mono break-all mb-4">ID: {r.transactionId}</p>

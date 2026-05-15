@@ -6,6 +6,8 @@ import {
   doc, onSnapshot, serverTimestamp, query, orderBy,
 } from "firebase/firestore";
 import { db } from "../firebase";
+import { useOfflineSync } from "../hooks/useOfflineSync";
+import toast from "react-hot-toast";
 
 const BLANK = { name:"", description:"", pricePerHour:"", amenities:"", isActive:true };
 
@@ -14,14 +16,13 @@ export default function CourtManager() {
   const [form, setForm]       = useState(BLANK);
   const [editId, setEditId]   = useState(null);
   const [showForm, setShowForm] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const [deleting, setDeleting] = useState(null);
   const [search, setSearch]   = useState("");
+  const { syncState, wrapSync } = useOfflineSync();
 
   useEffect(() => {
     const q = query(collection(db,"courts"), orderBy("createdAt","desc"));
-    const unsub = onSnapshot(q, snap => {
-      setCourts(snap.docs.map(d=>({id:d.id,...d.data()})));
+    const unsub = onSnapshot(q, { includeMetadataChanges: true }, snap => {
+      setCourts(snap.docs.map(d=>({id:d.id, hasPendingWrites: d.metadata.hasPendingWrites, ...d.data()})));
     });
     return () => unsub();
   }, []);
@@ -46,7 +47,6 @@ export default function CourtManager() {
 
   async function handleSubmit(e) {
     e.preventDefault();
-    setLoading(true);
     const payload = {
       name:         form.name.trim(),
       description:  form.description.trim(),
@@ -55,39 +55,49 @@ export default function CourtManager() {
       isActive:     form.isActive,
     };
     try {
+      let promise;
       if (editId) {
-        await updateDoc(doc(db,"courts",editId), payload);
-        await logCourtActivity(
-          "Court Updated",
-          `“${payload.name}” — price ₱${payload.pricePerHour}/hr${payload.isActive ? "" : " (inactive)"}`
-        );
+        promise = updateDoc(doc(db,"courts",editId), payload);
       } else {
-        await addDoc(collection(db,"courts"), { ...payload, createdAt: serverTimestamp() });
-        await logCourtActivity(
-          "Court Added",
-          `“${payload.name}” added at ₱${payload.pricePerHour}/hr`
-        );
+        promise = addDoc(collection(db,"courts"), { ...payload, createdAt: serverTimestamp() });
       }
+      await wrapSync(promise, {
+        successMsg: editId ? "Court updated" : "Court added",
+        offlineMsg: "Court Changes Saved Offline",
+        errorMsg: "Could not save court"
+      });
+      // Log activity in background — non-blocking
+      logCourtActivity(
+        editId ? "Court Updated" : "Court Added",
+        editId
+          ? `“${payload.name}” — price ₱${payload.pricePerHour}/hr${payload.isActive ? "" : " (inactive)"}`
+          : `“${payload.name}” added at ₱${payload.pricePerHour}/hr`
+      );
       closeForm();
     } catch(err) { console.error(err); }
-    setLoading(false);
   }
 
   async function handleDelete(id) {
     if (!window.confirm("Delete this court?")) return;
-    setDeleting(id);
     const name = courts.find((c) => c.id === id)?.name || "Court";
     try {
-      await deleteDoc(doc(db,"courts",id));
-      await logCourtActivity("Court Deleted", `“${name}” was removed`);
+      await wrapSync(deleteDoc(doc(db,"courts",id)), {
+        successMsg: "Court deleted",
+        offlineMsg: "Action Queued for Sync",
+        errorMsg: "Could not delete court"
+      });
+      logCourtActivity("Court Deleted", `“${name}” was removed`);
     } catch(err){ console.error(err); }
-    setDeleting(null);
   }
 
   async function toggleActive(court) {
     const next = !court.isActive;
-    await updateDoc(doc(db,"courts",court.id), { isActive: next });
-    await logCourtActivity(
+    await wrapSync(updateDoc(doc(db,"courts",court.id), { isActive: next }), {
+      successMsg: `Court ${next ? "activated" : "deactivated"}`,
+      offlineMsg: "Status Update Saved Offline",
+      errorMsg: "Could not update court status"
+    });
+    logCourtActivity(
       "Court Status Changed",
       `“${court.name}” ${next ? "activated" : "deactivated"}`
     );
@@ -119,7 +129,10 @@ export default function CourtManager() {
         {filtered.map(court => (
           <div key={court.id} className={`cm-card ${court.isActive?"":"cm-inactive"}`}>
             <div className="cm-card-header">
-              <div className="cm-card-name">{court.name}</div>
+              <div className="flex items-center gap-2">
+                <div className="cm-card-name">{court.name}</div>
+                {court.hasPendingWrites && <span className="ad-badge ad-badge-pending text-[10px] px-1 py-0 border border-amber-500/20">Pending Sync</span>}
+              </div>
               <div className={`ad-badge ${court.isActive?"ad-badge-approved":"ad-badge-rejected"}`}>
                 {court.isActive ? "Active" : "Inactive"}
               </div>
@@ -143,12 +156,12 @@ export default function CourtManager() {
                   📅 Book
                 </Link>
               )}
-              <button className="ad-btn ad-btn-sm ad-btn-outline" onClick={()=>openEdit(court)}> Edit</button>
-              <button className="ad-btn ad-btn-sm ad-btn-outline" onClick={()=>toggleActive(court)}>
+              <button className="ad-btn ad-btn-sm ad-btn-outline" onClick={()=>openEdit(court)} disabled={syncState !== 'idle' && syncState !== 'error'}> Edit</button>
+              <button className="ad-btn ad-btn-sm ad-btn-outline" onClick={()=>toggleActive(court)} disabled={syncState !== 'idle' && syncState !== 'error'}>
                 {court.isActive ? " Deactivate" : " Activate"}
               </button>
-              <button className="ad-btn ad-btn-sm ad-btn-danger" onClick={()=>handleDelete(court.id)} disabled={deleting===court.id}>
-                {deleting===court.id ? "..." : " Delete"}
+              <button className="ad-btn ad-btn-sm ad-btn-danger" onClick={()=>handleDelete(court.id)} disabled={syncState !== 'idle' && syncState !== 'error'}>
+                {syncState === 'syncing' ? "..." : " Delete"}
               </button>
             </div>
           </div>
@@ -190,9 +203,9 @@ export default function CourtManager() {
                 <input className="af-input" value={form.amenities} onChange={e=>set("amenities",e.target.value)} placeholder="Lights, Water Station, Parking"/>
               </div>
               <div className="ad-modal-footer">
-                <button type="button" className="ad-btn ad-btn-outline" onClick={closeForm}>Cancel</button>
-                <button type="submit" className="ad-btn ad-btn-primary" disabled={loading}>
-                  {loading ? "Saving..." : editId ? "Save Changes" : "Add Court"}
+                <button type="button" className="ad-btn ad-btn-outline" onClick={closeForm} disabled={syncState !== 'idle' && syncState !== 'error'}>Cancel</button>
+                <button type="submit" className="ad-btn ad-btn-primary" disabled={syncState !== 'idle' && syncState !== 'error'}>
+                  {syncState === 'syncing' ? "Saving..." : syncState === 'offline-saved' ? "Saved Offline" : editId ? "Save Changes" : "Add Court"}
                 </button>
               </div>
             </form>

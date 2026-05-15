@@ -6,6 +6,8 @@ import {
 } from "firebase/firestore";
 import { db } from "../firebase";
 import { useAuth } from "../auth/AuthContext";
+import { useOfflineSync } from "../hooks/useOfflineSync";
+import Pagination from "./Pagination";
 import Background from "../components/Background";
 
 const TYPES = ["info","warning","success"];
@@ -31,6 +33,11 @@ function AnnouncementCard({ announcement, onEdit, onToggle, onDelete }) {
         <div className={`an-card-status ${announcement.isActive ? 'active' : 'inactive'}`}>
           {announcement.isActive ? '🟢 Active' : '🔒 Hidden'}
         </div>
+        {announcement.hasPendingWrites && (
+          <div className="ml-2">
+            <span className="ad-badge ad-badge-pending text-[10px] px-1 py-0 border border-amber-500/20">Pending Sync</span>
+          </div>
+        )}
       </div>
       
       <div className="an-card-body">
@@ -48,11 +55,11 @@ function AnnouncementCard({ announcement, onEdit, onToggle, onDelete }) {
           </span>
         </div>
         <div className="an-card-actions">
-          <button className="an-card-btn an-card-btn-edit" onClick={()=>onEdit(announcement)}> Edit</button>
-          <button className="an-card-btn an-card-btn-toggle" onClick={()=>onToggle(announcement)}>
+          <button className="an-card-btn an-card-btn-edit" onClick={()=>onEdit(announcement)} disabled={announcement.disabled}> Edit</button>
+          <button className="an-card-btn an-card-btn-toggle" onClick={()=>onToggle(announcement)} disabled={announcement.disabled}>
             {announcement.isActive ? " Hide" : " Show"}
           </button>
-          <button className="an-card-btn an-card-btn-delete" onClick={()=>onDelete(announcement.id)}> Delete</button>
+          <button className="an-card-btn an-card-btn-delete" onClick={()=>onDelete(announcement.id)} disabled={announcement.disabled}> Delete</button>
         </div>
       </div>
     </div>
@@ -65,12 +72,15 @@ export default function AnnouncementManager() {
   const [form, setForm]     = useState(BLANK);
   const [editId, setEditId] = useState(null);
   const [showForm, setShowForm] = useState(false);
-  const [loading, setLoading]   = useState(false);
+  const { syncState, wrapSync } = useOfflineSync();
+  const [page, setPage] = useState(1);
+  const PAGE_SIZE = 10;
 
   useEffect(() => {
     const q = query(collection(db,"announcements"), orderBy("createdAt","desc"));
-    const unsub = onSnapshot(q, snap => {
-      setItems(snap.docs.map(d=>({id:d.id,...d.data()})));
+    const unsub = onSnapshot(q, { includeMetadataChanges: true }, snap => {
+      setItems(snap.docs.map(d=>({id:d.id, hasPendingWrites: d.metadata.hasPendingWrites, ...d.data()})));
+      setPage(1);
     });
     return () => unsub();
   }, []);
@@ -82,27 +92,44 @@ export default function AnnouncementManager() {
 
   async function handleSubmit(e) {
     e.preventDefault();
-    setLoading(true);
     const payload = { title:form.title.trim(), message:form.message.trim(), type:form.type, isActive:form.isActive };
     try {
+      let promise;
       if (editId) {
-        await updateDoc(doc(db,"announcements",editId), payload);
+        promise = updateDoc(doc(db,"announcements",editId), payload);
       } else {
-        await addDoc(collection(db,"announcements"), { ...payload, createdBy: profile?.name??"Admin", createdAt: serverTimestamp() });
+        promise = addDoc(collection(db,"announcements"), { ...payload, createdBy: profile?.name??"Admin", createdAt: serverTimestamp() });
       }
+      
+      await wrapSync(promise, {
+        successMsg: editId ? "Announcement updated" : "Announcement posted",
+        offlineMsg: "Action Saved Offline",
+        errorMsg: "Could not save announcement"
+      });
       close();
     } catch(err){ console.error(err); }
-    setLoading(false);
   }
 
   async function toggleActive(a) {
-    await updateDoc(doc(db,"announcements",a.id), { isActive: !a.isActive });
+    await wrapSync(updateDoc(doc(db,"announcements",a.id), { isActive: !a.isActive }), {
+      successMsg: `Announcement ${!a.isActive ? 'shown' : 'hidden'}`,
+      offlineMsg: "Status Update Saved Offline",
+      errorMsg: "Could not toggle visibility"
+    });
   }
 
   async function handleDelete(id) {
     if(!window.confirm("Delete this announcement?")) return;
-    await deleteDoc(doc(db,"announcements",id));
+    await wrapSync(deleteDoc(doc(db,"announcements",id)), {
+      successMsg: "Announcement deleted",
+      offlineMsg: "Action Queued for Sync",
+      errorMsg: "Could not delete announcement"
+    });
   }
+
+  const totalPages = Math.max(1, Math.ceil(items.length / PAGE_SIZE));
+  const safePage = Math.min(page, totalPages);
+  const pageItems = items.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
 
   return (
     <div className="page-with-bg">
@@ -125,17 +152,20 @@ export default function AnnouncementManager() {
             <button className="ad-btn ad-btn-primary" onClick={openAdd}>+ Create Announcement</button>
           </div>
         ) : (
-          <div className="an-cards-grid">
-            {items.map(a => (
-              <AnnouncementCard
-                key={a.id}
-                announcement={a}
-                onEdit={openEdit}
-                onToggle={toggleActive}
-                onDelete={handleDelete}
-              />
-            ))}
-          </div>
+          <>
+            <div className="an-cards-grid">
+              {pageItems.map(a => (
+                <AnnouncementCard
+                  key={a.id}
+                  announcement={{...a, disabled: syncState !== 'idle' && syncState !== 'error'}}
+                  onEdit={openEdit}
+                  onToggle={toggleActive}
+                  onDelete={handleDelete}
+                />
+              ))}
+            </div>
+            <Pagination page={safePage} totalPages={totalPages} onPage={setPage} />
+          </>
         )}
 
         {showForm && (
@@ -177,9 +207,9 @@ export default function AnnouncementManager() {
                   </div>
                 </div>
                 <div className="ad-modal-footer">
-                  <button type="button" className="ad-btn ad-btn-outline" onClick={close}>Cancel</button>
-                  <button type="submit" className="ad-btn ad-btn-primary" disabled={loading}>
-                    {loading?"Saving...":editId?"Save Changes":"Post Announcement"}
+                  <button type="button" className="ad-btn ad-btn-outline" onClick={close} disabled={syncState !== 'idle' && syncState !== 'error'}>Cancel</button>
+                  <button type="submit" className="ad-btn ad-btn-primary" disabled={syncState !== 'idle' && syncState !== 'error'}>
+                    {syncState === "syncing" ? "Saving..." : syncState === "offline-saved" ? "Saved Offline" : editId ? "Save Changes" : "Post Announcement"}
                   </button>
                 </div>
               </form>

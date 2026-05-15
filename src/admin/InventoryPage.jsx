@@ -15,7 +15,9 @@ import {
   increment,
   getDoc,
 } from "firebase/firestore";
+import { useOfflineSync } from "../hooks/useOfflineSync";
 import { db } from "../firebase";
+import Pagination from "./Pagination";
 import toast from "react-hot-toast";
 import { format } from "date-fns";
 import {
@@ -97,14 +99,22 @@ export default function InventoryPage() {
   const [borrows, setBorrows] = useState([]);
   const [loading, setLoading] = useState(true);
 
+  // Pagination: one state per table
+  const PAGE_SIZE = 10;
+  const [dashBorrowPage, setDashBorrowPage] = useState(1);
+  const [catalogPage, setCatalogPage] = useState(1);
+  const [activeBorrowPage, setActiveBorrowPage] = useState(1);
+  const [historyPage, setHistoryPage] = useState(1);
+
+  function handleTabChange(t) { setTab(t); setDashBorrowPage(1); setCatalogPage(1); setActiveBorrowPage(1); setHistoryPage(1); }
+
   const [itemModal, setItemModal] = useState(null);
   const [itemForm, setItemForm] = useState(BLANK_ITEM);
-  const [itemSaving, setItemSaving] = useState(false);
+  const { syncState, wrapSync } = useOfflineSync();
 
   const [borrowerName, setBorrowerName] = useState("");
   const [borrowHours, setBorrowHours] = useState(2);
   const [borrowLines, setBorrowLines] = useState([{ itemId: "", quantity: 1 }]);
-  const [borrowSubmitting, setBorrowSubmitting] = useState(false);
 
   const [extendModal, setExtendModal] = useState(null);
   const [extendHours, setExtendHours] = useState(1);
@@ -115,8 +125,9 @@ export default function InventoryPage() {
     const qi = query(collection(db, "inventoryItems"), orderBy("name", "asc"));
     const unsubI = onSnapshot(
       qi,
+      { includeMetadataChanges: true },
       (snap) => {
-        setItems(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+        setItems(snap.docs.map((d) => ({ id: d.id, hasPendingWrites: d.metadata.hasPendingWrites, ...d.data() })));
         setLoading(false);
       },
       (err) => {
@@ -125,8 +136,8 @@ export default function InventoryPage() {
       }
     );
     const qb = query(collection(db, "borrowRecords"), orderBy("borrowedAt", "desc"));
-    const unsubB = onSnapshot(qb, (snap) => {
-      setBorrows(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+    const unsubB = onSnapshot(qb, { includeMetadataChanges: true }, (snap) => {
+      setBorrows(snap.docs.map((d) => ({ id: d.id, hasPendingWrites: d.metadata.hasPendingWrites, ...d.data() })));
     });
     return () => {
       unsubI();
@@ -235,10 +246,10 @@ export default function InventoryPage() {
       toast.error("Name is required");
       return;
     }
-    setItemSaving(true);
     try {
+      let promise;
       if (itemModal === "new") {
-        await addDoc(collection(db, "inventoryItems"), {
+        promise = addDoc(collection(db, "inventoryItems"), {
           name,
           category: itemForm.category.trim(),
           notes: itemForm.notes.trim(),
@@ -249,7 +260,6 @@ export default function InventoryPage() {
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
         });
-        toast.success("Item added");
       } else {
         const ref = doc(db, "inventoryItems", itemModal);
         const snap = await getDoc(ref);
@@ -261,11 +271,10 @@ export default function InventoryPage() {
         const newTotal = total;
         if (newTotal < onLoan) {
           toast.error(`Total must be at least ${onLoan} (currently on loan).`);
-          setItemSaving(false);
           return;
         }
         const newAvailable = newTotal - onLoan;
-        await updateDoc(ref, {
+        promise = updateDoc(ref, {
           name,
           category: itemForm.category.trim(),
           notes: itemForm.notes.trim(),
@@ -275,14 +284,18 @@ export default function InventoryPage() {
           overdueFinePerHour,
           updatedAt: serverTimestamp(),
         });
-        toast.success("Item updated");
       }
+
+      await wrapSync(promise, {
+        successMsg: itemModal === "new" ? "Item added" : "Item updated",
+        offlineMsg: "Equipment Changes Saved Offline",
+        errorMsg: "Could not save item"
+      });
+
       setItemModal(null);
     } catch (err) {
       console.error(err);
-      toast.error("Could not save item");
     }
-    setItemSaving(false);
   }
 
   async function removeItem(it) {
@@ -292,11 +305,13 @@ export default function InventoryPage() {
     }
     if (!window.confirm(`Delete “${it.name}”?`)) return;
     try {
-      await deleteDoc(doc(db, "inventoryItems", it.id));
-      toast.success("Item removed");
+      await wrapSync(deleteDoc(doc(db, "inventoryItems", it.id)), {
+        successMsg: "Item removed",
+        offlineMsg: "Action Queued for Sync",
+        errorMsg: "Delete failed"
+      });
     } catch (err) {
       console.error(err);
-      toast.error("Delete failed");
     }
   }
 
@@ -350,7 +365,6 @@ export default function InventoryPage() {
       }
     }
 
-    setBorrowSubmitting(true);
     try {
       const now = Date.now();
       const expectedMs = now + hours * 3600 * 1000;
@@ -375,16 +389,19 @@ export default function InventoryPage() {
           updatedAt: serverTimestamp(),
         });
       }
-      await batch.commit();
-      toast.success("Borrow recorded");
+
+      await wrapSync(batch.commit(), {
+        successMsg: "Borrow recorded",
+        offlineMsg: "Borrow Saved Offline — Pending Server Sync",
+        errorMsg: "Borrow failed — check Firestore rules and stock."
+      });
+
       setBorrowerName("");
       setBorrowHours(2);
       setBorrowLines([{ itemId: "", quantity: 1 }]);
     } catch (err) {
       console.error(err);
-      toast.error("Borrow failed — check Firestore rules and stock.");
     }
-    setBorrowSubmitting(false);
   }
 
   async function returnBorrow(b) {
@@ -430,15 +447,15 @@ export default function InventoryPage() {
           updatedAt: serverTimestamp(),
         });
       }
-      await batch.commit();
-      toast.success(
-        overdueCharge > 0
+      await wrapSync(batch.commit(), {
+        successMsg: overdueCharge > 0
           ? `Returned — total due ₱${totalCharge.toFixed(2)} (incl. overdue)`
-          : "Items returned — stock updated"
-      );
+          : "Items returned — stock updated",
+        offlineMsg: "Return Action Saved Offline — Pending Server Sync",
+        errorMsg: "Return failed"
+      });
     } catch (err) {
       console.error(err);
-      toast.error("Return failed");
     }
   }
 
@@ -464,17 +481,22 @@ export default function InventoryPage() {
         extraRentalCharge: extraRental,
       };
       const hist = [...(data.extensionHistory || []), entry];
-      await updateDoc(ref, {
+      const promise = updateDoc(ref, {
         expectedReturnAt: Timestamp.fromMillis(newMs),
         extensionHistory: hist,
         estimatedRentalCharge: roundMoney(baseRental + extraRental),
       });
-      toast.success("Borrowing time extended");
+
+      await wrapSync(promise, {
+        successMsg: "Borrowing time extended",
+        offlineMsg: "Extension Saved Offline",
+        errorMsg: "Extension failed"
+      });
+
       setExtendModal(null);
       setExtendHours(1);
     } catch (err) {
       console.error(err);
-      toast.error("Extension failed");
     }
   }
 
@@ -515,7 +537,7 @@ export default function InventoryPage() {
             key={t.id}
             type="button"
             className={`ad-filter-tab ${tab === t.id ? "active" : ""}`}
-            onClick={() => setTab(t.id)}
+            onClick={() => handleTabChange(t.id)}
           >
             {t.label}
           </button>
@@ -557,9 +579,14 @@ export default function InventoryPage() {
                       </tr>
                     </thead>
                     <tbody>
-                      {activeBorrows.map((b) => (
+                      {activeBorrows.slice((dashBorrowPage - 1) * PAGE_SIZE, dashBorrowPage * PAGE_SIZE).map((b) => (
                         <tr key={b.id}>
-                          <td className="ad-td-main font-semibold">{b.borrowerName}</td>
+                          <td className="ad-td-main font-semibold">
+                            <div className="flex items-center gap-2">
+                              {b.borrowerName}
+                              {b.hasPendingWrites && <span className="ad-badge ad-badge-pending text-[10px] px-1 py-0 border border-amber-500/20">Pending Sync</span>}
+                            </div>
+                          </td>
                           <td className="text-sm">
                             {(b.items || [])
                               .map((l) => `${l.itemName} ×${l.quantity}`)
@@ -602,6 +629,7 @@ export default function InventoryPage() {
                               type="button"
                               className="ad-btn ad-btn-sm ad-btn-success"
                               onClick={() => returnBorrow(b)}
+                              disabled={syncState !== "idle" && syncState !== "error"}
                             >
                               Return
                             </button>
@@ -612,6 +640,11 @@ export default function InventoryPage() {
                   </table>
                 </div>
               )}
+              <Pagination
+                page={dashBorrowPage}
+                totalPages={Math.max(1, Math.ceil(activeBorrows.length / PAGE_SIZE))}
+                onPage={setDashBorrowPage}
+              />
             </div>
           </div>
 
@@ -699,9 +732,14 @@ export default function InventoryPage() {
                       </td>
                     </tr>
                   )}
-                  {items.map((it) => (
+                  {items.slice((catalogPage - 1) * PAGE_SIZE, catalogPage * PAGE_SIZE).map((it) => (
                     <tr key={it.id}>
-                      <td className="ad-td-main">{it.name}</td>
+                      <td className="ad-td-main">
+                        <div className="flex items-center gap-2">
+                          {it.name}
+                          {it.hasPendingWrites && <span className="ad-badge ad-badge-pending text-[10px] px-1 py-0 border border-amber-500/20">Pending Sync</span>}
+                        </div>
+                      </td>
                       <td className="text-sm text-[var(--ad-muted)]">{it.category || "—"}</td>
                       <td className="font-mono text-emerald-400">{it.availableQty ?? 0}</td>
                       <td className="font-mono">{it.totalQty ?? 0}</td>
@@ -723,6 +761,7 @@ export default function InventoryPage() {
                           type="button"
                           className="ad-btn ad-btn-sm ad-btn-danger"
                           onClick={() => removeItem(it)}
+                          disabled={syncState !== "idle" && syncState !== "error"}
                         >
                           Delete
                         </button>
@@ -732,6 +771,11 @@ export default function InventoryPage() {
                 </tbody>
               </table>
             </div>
+            <Pagination
+              page={catalogPage}
+              totalPages={Math.max(1, Math.ceil(items.length / PAGE_SIZE))}
+              onPage={setCatalogPage}
+            />
           </div>
         </section>
       )}
@@ -844,8 +888,8 @@ export default function InventoryPage() {
                   (per unit, per hour late) apply only after the due time — shown when you process the return.
                 </p>
               </div>
-              <button type="submit" className="ad-btn ad-btn-primary" disabled={borrowSubmitting}>
-                {borrowSubmitting ? "Saving…" : "Record borrow"}
+              <button type="submit" className="ad-btn ad-btn-primary" disabled={syncState !== "idle" && syncState !== "error"}>
+                {syncState === "syncing" ? "Saving…" : syncState === "offline-saved" ? "Saved Offline" : "Record borrow"}
               </button>
             </form>
           </div>
@@ -877,9 +921,14 @@ export default function InventoryPage() {
                       </td>
                     </tr>
                   ) : (
-                    activeBorrows.map((b) => (
+                    activeBorrows.slice((activeBorrowPage - 1) * PAGE_SIZE, activeBorrowPage * PAGE_SIZE).map((b) => (
                       <tr key={b.id}>
-                        <td className="ad-td-main">{b.borrowerName}</td>
+                        <td className="ad-td-main">
+                          <div className="flex items-center gap-2">
+                            {b.borrowerName}
+                            {b.hasPendingWrites && <span className="ad-badge ad-badge-pending text-[10px] px-1 py-0 border border-amber-500/20">Pending Sync</span>}
+                          </div>
+                        </td>
                         <td className="text-sm">
                           {(b.items || []).map((l) => `${l.itemName} ×${l.quantity}`).join(", ")}
                         </td>
@@ -906,6 +955,7 @@ export default function InventoryPage() {
                             type="button"
                             className="ad-btn ad-btn-sm ad-btn-success"
                             onClick={() => returnBorrow(b)}
+                            disabled={syncState !== "idle" && syncState !== "error"}
                           >
                             Return
                           </button>
@@ -916,6 +966,11 @@ export default function InventoryPage() {
                 </tbody>
               </table>
             </div>
+            <Pagination
+              page={activeBorrowPage}
+              totalPages={Math.max(1, Math.ceil(activeBorrows.length / PAGE_SIZE))}
+              onPage={setActiveBorrowPage}
+            />
           </div>
         </section>
       )}
@@ -965,7 +1020,7 @@ export default function InventoryPage() {
                       </td>
                     </tr>
                   ) : (
-                    reportFilteredBorrows.map((b) => (
+                    reportFilteredBorrows.slice((historyPage - 1) * PAGE_SIZE, historyPage * PAGE_SIZE).map((b) => (
                       <tr key={b.id}>
                         <td className="ad-td-main">{b.borrowerName}</td>
                         <td className="text-sm">
@@ -1006,6 +1061,11 @@ export default function InventoryPage() {
               </table>
             </div>
           </div>
+          <Pagination
+            page={historyPage}
+            totalPages={Math.max(1, Math.ceil(reportFilteredBorrows.length / PAGE_SIZE))}
+            onPage={setHistoryPage}
+          />
 
           <div className="grid md:grid-cols-2 gap-4">
             <div className="ad-card p-4">
@@ -1125,11 +1185,11 @@ export default function InventoryPage() {
                 />
               </div>
               <div className="ad-modal-footer">
-                <button type="button" className="ad-btn ad-btn-outline" onClick={() => setItemModal(null)}>
+                <button type="button" className="ad-btn ad-btn-outline" onClick={() => setItemModal(null)} disabled={syncState !== "idle" && syncState !== "error"}>
                   Cancel
                 </button>
-                <button type="submit" className="ad-btn ad-btn-primary" disabled={itemSaving}>
-                  {itemSaving ? "Saving…" : "Save"}
+                <button type="submit" className="ad-btn ad-btn-primary" disabled={syncState !== "idle" && syncState !== "error"}>
+                  {syncState === "syncing" ? "Saving…" : syncState === "offline-saved" ? "Saved Offline" : "Save"}
                 </button>
               </div>
             </form>
@@ -1182,11 +1242,11 @@ export default function InventoryPage() {
               )}
             </div>
             <div className="ad-modal-footer">
-              <button type="button" className="ad-btn ad-btn-outline" onClick={() => setExtendModal(null)}>
+              <button type="button" className="ad-btn ad-btn-outline" onClick={() => setExtendModal(null)} disabled={syncState !== "idle" && syncState !== "error"}>
                 Cancel
               </button>
-              <button type="button" className="ad-btn ad-btn-primary" onClick={applyExtension}>
-                Apply extension
+              <button type="button" className="ad-btn ad-btn-primary" onClick={applyExtension} disabled={syncState !== "idle" && syncState !== "error"}>
+                {syncState === "syncing" ? "Extending..." : syncState === "offline-saved" ? "Saved Offline" : "Apply extension"}
               </button>
             </div>
           </div>

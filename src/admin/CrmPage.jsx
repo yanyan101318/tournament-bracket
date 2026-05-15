@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from "react";
 import { collection, query, orderBy, onSnapshot } from "firebase/firestore";
 import { db } from "../firebase";
 import { roundMoney } from "../lib/bookingMoney";
+import Pagination from "./Pagination";
 
 export default function CrmPage() {
   const [customers, setCustomers] = useState([]);
@@ -10,6 +11,8 @@ export default function CrmPage() {
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState("All");
   const [selected, setSelected] = useState(null);
+  const [page, setPage] = useState(1);
+  const PAGE_SIZE = 10;
 
   useEffect(() => {
     const q = query(collection(db, "customers"), orderBy("updatedAt", "desc"));
@@ -56,6 +59,14 @@ export default function CrmPage() {
     });
   }, [customers, search, filter]);
 
+  // Reset page when filters change
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const safePage = Math.min(page, totalPages);
+  const pageRows = filtered.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
+
+  function handleFilter(k) { setFilter(k); setPage(1); }
+  function handleSearch(v) { setSearch(v); setPage(1); }
+
   if (loading) {
     return (
       <div className="ad-loading">
@@ -75,7 +86,7 @@ export default function CrmPage() {
 
       <div className="ad-filter-tabs">
         {["All", "Active", "High value"].map((k) => (
-          <button key={k} type="button" className={`ad-filter-tab ${filter === k ? "active" : ""}`} onClick={() => setFilter(k)}>
+          <button key={k} type="button" className={`ad-filter-tab ${filter === k ? "active" : ""}`} onClick={() => handleFilter(k)}>
             {k}
           </button>
         ))}
@@ -85,7 +96,7 @@ export default function CrmPage() {
         <input
           className="ad-search"
           value={search}
-          onChange={(e) => setSearch(e.target.value)}
+          onChange={(e) => handleSearch(e.target.value)}
           placeholder="Search name, phone, or email…"
         />
         <span className="ad-count">
@@ -113,7 +124,7 @@ export default function CrmPage() {
                   </td>
                 </tr>
               )}
-              {filtered.map((c) => (
+              {pageRows.map((c) => (
                 <tr key={c.id} className="ad-table-row cursor-pointer" onClick={() => setSelected(c)}>
                   <td className="ad-td-main">{c.fullName ?? "—"}</td>
                   <td>{c.contactNumber ?? "—"}</td>
@@ -126,6 +137,7 @@ export default function CrmPage() {
           </table>
         </div>
       </div>
+      <Pagination page={safePage} totalPages={totalPages} onPage={setPage} />
 
       {selected && (
         <div className="ad-modal-backdrop" onClick={() => setSelected(null)}>

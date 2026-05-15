@@ -5,6 +5,7 @@ import { format } from "date-fns";
 import toast from "react-hot-toast";
 import { buildReceiptHtml, formatReceiptCurrency, printReceiptHtml } from "./posReceipt";
 import { downloadSalesHistoryPdf, downloadPosReceiptPdf } from "../lib/adminPdfReports";
+import Pagination from "./Pagination";
 
 function tsToDate(ts) {
   if (!ts) return null;
@@ -20,6 +21,8 @@ export default function SalesHistoryPage() {
   const [dateFrom, setDateFrom] = useState(() => format(new Date(), "yyyy-MM-dd"));
   const [dateTo, setDateTo] = useState(() => format(new Date(), "yyyy-MM-dd"));
   const [detail, setDetail] = useState(null);
+  const [page, setPage] = useState(1);
+  const PAGE_SIZE = 10;
 
   useEffect(() => {
     const q = query(collection(db, "salesTransactions"), orderBy("createdAt", "desc"), limit(500));
@@ -60,6 +63,14 @@ export default function SalesHistoryPage() {
       return items.some((l) => (l.name || "").toLowerCase().includes(q));
     });
   }, [rows, search, rangeStart, rangeEnd]);
+
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const safePage = Math.min(page, totalPages);
+  const pageRows = filtered.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
+
+  function handleSearch(v) { setSearch(v); setPage(1); }
+  function handleDateFrom(v) { setDateFrom(v); setPage(1); }
+  function handleDateTo(v) { setDateTo(v); setPage(1); }
 
   if (loading) {
     return (
@@ -102,7 +113,7 @@ export default function SalesHistoryPage() {
             type="date"
             className="ad-search"
             value={dateFrom}
-            onChange={(e) => setDateFrom(e.target.value)}
+            onChange={(e) => handleDateFrom(e.target.value)}
           />
         </div>
         <div className="flex flex-wrap gap-2 items-center">
@@ -111,7 +122,7 @@ export default function SalesHistoryPage() {
             type="date"
             className="ad-search"
             value={dateTo}
-            onChange={(e) => setDateTo(e.target.value)}
+            onChange={(e) => handleDateTo(e.target.value)}
           />
         </div>
         <div className="flex-1 min-w-[200px]">
@@ -119,7 +130,7 @@ export default function SalesHistoryPage() {
             className="ad-search w-full max-w-none"
             placeholder="Search by receipt ID, product name, payment method…"
             value={search}
-            onChange={(e) => setSearch(e.target.value)}
+            onChange={(e) => handleSearch(e.target.value)}
           />
         </div>
         <span className="text-sm text-[var(--ad-muted)]">{filtered.length} transaction(s)</span>
@@ -146,7 +157,7 @@ export default function SalesHistoryPage() {
                   </td>
                 </tr>
               )}
-              {filtered.map((r) => {
+              {pageRows.map((r) => {
                 const dt = tsToDate(r.createdAt);
                 const items = r.items || [];
                 const summary =
@@ -185,6 +196,7 @@ export default function SalesHistoryPage() {
           </table>
         </div>
       </div>
+      <Pagination page={safePage} totalPages={totalPages} onPage={setPage} />
 
       {detail && (
         <div className="ad-modal-backdrop" onClick={() => setDetail(null)}>

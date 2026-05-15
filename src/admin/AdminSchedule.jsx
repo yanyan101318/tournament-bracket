@@ -40,15 +40,16 @@ export default function AdminSchedule() {
     const qB = query(collection(db, "bookings"), orderBy("createdAt", "desc"));
     const unsubB = onSnapshot(
       qB,
+      { includeMetadataChanges: true },
       (snap) => {
-        setBookings(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+        setBookings(snap.docs.map((d) => ({ id: d.id, hasPendingWrites: d.metadata.hasPendingWrites, ...d.data() })));
         setLoading(false);
       },
       () => setLoading(false)
     );
     const qP = query(collection(db, "payments"), orderBy("createdAt", "desc"));
-    const unsubP = onSnapshot(qP, (snap) => {
-      setPayments(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+    const unsubP = onSnapshot(qP, { includeMetadataChanges: true }, (snap) => {
+      setPayments(snap.docs.map((d) => ({ id: d.id, hasPendingWrites: d.metadata.hasPendingWrites, ...d.data() })));
     });
     return () => {
       unsubB();
@@ -88,7 +89,7 @@ export default function AdminSchedule() {
         sort: `${b.timeSlot || "00:00"}-${b.id}`,
         label: "Court booking",
         title: `${b.playerName || "Guest"} · ${b.courtName || b.courtId || "Court"}`,
-        sub: [b.timeSlot, b.status].filter(Boolean).join(" · "),
+        sub: [b.timeSlot, b.status, b.hasPendingWrites ? "Pending Sync" : null].filter(Boolean).join(" · "),
         id: b.id,
       });
     }
@@ -100,7 +101,7 @@ export default function AdminSchedule() {
         sort: `${timeStr}-${p.id}`,
         label: "Payment activity",
         title: `${p.name || "Customer"} · ₱${p.amount ?? "—"}`,
-        sub: [p.method, p.paymentStatus].filter(Boolean).join(" · "),
+        sub: [p.method, p.paymentStatus, p.hasPendingWrites ? "Pending Sync" : null].filter(Boolean).join(" · "),
         id: p.id,
       });
     }

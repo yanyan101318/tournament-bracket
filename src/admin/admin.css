@@ -647,3 +647,73 @@ body {
   .ad-page    { padding: 1rem; }
   .ad-stats-grid { grid-template-columns: 1fr 1fr; }
 }
+
+/* ── PAGINATION ───────────────────────────────── */
+.ad-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 1rem 1.25rem;
+  border-top: 1px solid var(--ad-border);
+  flex-wrap: wrap;
+}
+.ad-pg-btn {
+  padding: 0.3rem 0.75rem;
+  border-radius: 6px;
+  border: 1.5px solid var(--ad-border);
+  background: transparent;
+  color: var(--ad-muted);
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+  white-space: nowrap;
+}
+.ad-pg-btn:hover:not(:disabled) {
+  background: rgba(200, 230, 58, 0.08);
+  border-color: var(--ad-pickle);
+  color: var(--ad-pickle);
+}
+.ad-pg-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+.ad-pg-numbers {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+.ad-pg-num {
+  min-width: 30px;
+  height: 30px;
+  padding: 0 6px;
+  border-radius: 6px;
+  border: 1.5px solid transparent;
+  background: transparent;
+  color: var(--ad-muted);
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.ad-pg-num:hover {
+  background: rgba(200, 230, 58, 0.08);
+  color: var(--ad-pickle);
+}
+.ad-pg-num.active {
+  background: var(--ad-pickle);
+  color: #0d0f14;
+  border-color: var(--ad-pickle);
+  font-weight: 700;
+}
+.ad-pg-ellipsis {
+  color: var(--ad-muted);
+  font-size: 0.78rem;
+  padding: 0 2px;
+  user-select: none;
+}

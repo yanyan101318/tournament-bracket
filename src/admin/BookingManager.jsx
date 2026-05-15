@@ -17,6 +17,7 @@ import { canExtendBooking, EXTEND_OPTIONS } from "../lib/bookingSlots";
 import { roundMoney } from "../lib/bookingMoney";
 import { resolveCustomerPayStatus, PLAN_FULL } from "../lib/bookingPayment";
 import toast from "react-hot-toast";
+import { useOfflineSync } from "../hooks/useOfflineSync";
 
 const STATUS_COLORS = { Pending:"pending", Approved:"approved", Cancelled:"rejected" };
 const PAY_STATUS_BADGE = { paid: "approved", partial: "pending", unpaid: "rejected" };
@@ -55,13 +56,19 @@ export default function BookingManager() {
   const [extending, setExtending] = useState(false);
   const [balanceModal, setBalanceModal] = useState(EMPTY_BALANCE_MODAL);
   const [payStatusDraft, setPayStatusDraft] = useState("");
+  const { wrapSync } = useOfflineSync();
 
   useEffect(() => {
     const q = query(collection(db,"bookings"), orderBy("createdAt","desc"));
     const unsub = onSnapshot(
       q,
+      { includeMetadataChanges: true },
       (snap) => {
-        setBookings(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+        setBookings(snap.docs.map((d) => ({ 
+          id: d.id, 
+          hasPendingWrites: d.metadata.hasPendingWrites,
+          ...d.data() 
+        })));
         setLoading(false);
       },
       (err) => {
@@ -148,9 +155,13 @@ export default function BookingManager() {
   async function setStatus(id, status) {
     setActing(id);
     try {
-      await updateDoc(doc(db,"bookings",id), {
+      const promise = updateDoc(doc(db,"bookings",id), {
         status,
         reviewedAt: Timestamp.now(),
+      });
+      await wrapSync(promise, {
+        successMsg: `Booking ${status}`,
+        offlineMsg: "Action Queued for Sync"
       });
     } catch(err) { console.error(err); }
     setActing(null);
@@ -219,8 +230,12 @@ export default function BookingManager() {
           customerPaymentStatus: payStatus,
         });
       });
-      await batch.commit();
-      toast.success("Booking extended");
+      
+      await wrapSync(batch.commit(), {
+        successMsg: "Booking extended",
+        offlineMsg: "Extension Saved Offline — Pending Server Sync"
+      });
+
       setSelected((s) =>
         s && s.id === b.id
           ? {
@@ -235,7 +250,7 @@ export default function BookingManager() {
       );
     } catch (e) {
       console.error(e);
-      toast.error("Could not extend booking");
+      // toast is handled by wrapSync if error happens in promise
     }
     setExtending(false);
   }
@@ -332,8 +347,12 @@ export default function BookingManager() {
         createdAt: serverTimestamp(),
       });
 
-      await batch.commit();
-      toast.success(newRemaining <= 0 ? "Balance settled." : "Payment recorded.");
+      await wrapSync(batch.commit(), {
+        successMsg: newRemaining <= 0 ? "Balance settled." : "Payment recorded.",
+        offlineMsg: "Payment Saved Offline — Pending Server Sync",
+        errorMsg: "Could not record balance payment."
+      });
+
       closeBalanceModal();
       setSelected((s) =>
         s && s.id === b.id
@@ -347,7 +366,6 @@ export default function BookingManager() {
       );
     } catch (e) {
       console.error(e);
-      toast.error("Could not record balance payment.");
     } finally {
       setActing(null);
     }
@@ -376,12 +394,16 @@ export default function BookingManager() {
           updatedAt: serverTimestamp(),
         });
       });
-      await batch.commit();
-      toast.success("Pay status updated.");
+
+      await wrapSync(batch.commit(), {
+        successMsg: "Pay status updated.",
+        offlineMsg: "Status Update Saved Offline — Pending Server Sync",
+        errorMsg: "Could not update pay status."
+      });
+
       setSelected((s) => (s && s.id === booking.id ? { ...s, customerPaymentStatus: status } : s));
     } catch (e) {
       console.error(e);
-      toast.error("Could not update pay status.");
     } finally {
       setActing(null);
     }
@@ -417,7 +439,12 @@ export default function BookingManager() {
       const batch = writeBatch(db);
       linkedSnap.forEach((d) => batch.delete(d.ref));
       batch.delete(doc(db, "bookings", id));
-      await batch.commit();
+      
+      await wrapSync(batch.commit(), {
+        successMsg: "Booking deleted permanently.",
+        offlineMsg: "Action Queued for Sync",
+        errorMsg: "Could not delete this booking."
+      });
     } catch (err) {
       console.error(err);
       window.alert("Could not delete this booking. Check your connection and permissions.");
@@ -576,7 +603,7 @@ export default function BookingManager() {
                       {(b.customerPaymentStatus ?? "—").toString()}
                     </span>
                   </td>
-                  <td><span className={`ad-badge ad-badge-${STATUS_COLORS[b.status]??"pending"}`}>{b.status??"Pending"}</span></td>
+                  <td><span className={`ad-badge ad-badge-${b.hasPendingWrites ? "pending" : (STATUS_COLORS[b.status]??"pending")}`}>{b.hasPendingWrites ? "Pending Sync" : (b.status??"Pending")}</span></td>
                   <td onClick={e=>e.stopPropagation()}>
                     <div className="ad-action-btns">
                       {b.status!=="Approved" && (

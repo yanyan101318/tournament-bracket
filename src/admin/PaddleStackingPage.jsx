@@ -16,6 +16,7 @@ import {
   Timestamp,
 } from "firebase/firestore";
 import { db } from "../firebase";
+import { useOfflineSync } from "../hooks/useOfflineSync";
 import toast from "react-hot-toast";
 import { format, parse, isValid } from "date-fns";
 
@@ -410,6 +411,7 @@ export default function PaddleStackingPage() {
   const [randomCategory, setRandomCategory] = useState("male");
   const [randomSkill, setRandomSkill] = useState("high");
   const [groupNames, setGroupNames] = useState(["", "", "", ""]);
+  const { wrapSync } = useOfflineSync();
 
   useEffect(() => {
     const cq = query(collection(db, "courts"), orderBy("createdAt", "desc"));
@@ -550,9 +552,12 @@ export default function PaddleStackingPage() {
             skillLevel: randomSkill,
           }
         : base;
-    await persistState({ queue: [...queue, entry] });
+    await wrapSync(persistState({ queue: [...queue, entry] }), {
+      successMsg: "Added to stack",
+      offlineMsg: "Player Queued Offline — Will Sync Automatically",
+      errorMsg: "Could not add player"
+    });
     setNewPlayer("");
-    toast.success("Added to stack");
   }
 
   async function addGroupSubmit(e) {
@@ -580,9 +585,12 @@ export default function PaddleStackingPage() {
       members: names,
       addedAt: Timestamp.now(),
     };
-    await persistState({ queue: [...queue, entry] });
+    await wrapSync(persistState({ queue: [...queue, entry] }), {
+      successMsg: "Group added to queue",
+      offlineMsg: "Group Queued Offline — Will Sync Automatically",
+      errorMsg: "Could not add group"
+    });
     setGroupNames(["", "", "", ""]);
-    toast.success("Group added to queue");
   }
 
   async function removeFromQueue(entryId) {
@@ -644,8 +652,11 @@ export default function PaddleStackingPage() {
           }
         : c
     );
-    await persistState({ queue: rest, courts: nextCourts });
-    toast.success(`${assignMode === "singles" ? "Singles" : "Doubles"} started on ${court.name}`);
+    await wrapSync(persistState({ queue: rest, courts: nextCourts }), {
+      successMsg: `${assignMode === "singles" ? "Singles" : "Doubles"} started on ${court.name}`,
+      offlineMsg: "Match Assignment Saved Offline — Will Sync Automatically",
+      errorMsg: "Could not assign match"
+    });
   }
 
   async function finishMatch(courtId) {
@@ -655,7 +666,11 @@ export default function PaddleStackingPage() {
     const nextCourts = courts.map((c) =>
       c.id === courtId ? courtClearedForAvailable(c) : c
     );
-    await persistState({ courts: nextCourts });
+    await wrapSync(persistState({ courts: nextCourts }), {
+      successMsg: `${court.name} is available again`,
+      offlineMsg: "Court Status Saved Offline — Will Sync Automatically",
+      errorMsg: "Court freed — history log may have failed"
+    });
     try {
       await addDoc(collection(db, "paddleMatchHistory"), {
         courtId: court.id,
@@ -671,9 +686,7 @@ export default function PaddleStackingPage() {
     } catch (err) {
       console.error(err);
       toast.error("Court freed — history log failed (check rules).");
-      return;
     }
-    toast.success(`${court.name} is available again`);
   }
 
   async function requeueFromHistory(h) {
@@ -733,8 +746,11 @@ export default function PaddleStackingPage() {
     )
       return;
     const nextCourts = courts.map((c) => courtClearedForAvailable(c));
-    await persistState({ queue: [], courts: nextCourts });
-    toast.success("Session reset");
+    await wrapSync(persistState({ queue: [], courts: nextCourts }), {
+      successMsg: "Session reset",
+      offlineMsg: "Session Reset Saved Offline — Will Sync Automatically",
+      errorMsg: "Could not reset session"
+    });
   }
 
   useEffect(() => {
