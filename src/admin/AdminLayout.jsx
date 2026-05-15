@@ -1,7 +1,7 @@
 // src/admin/AdminLayout.jsx
 import { useState, useEffect, useRef } from "react";
 import { NavLink, Outlet, useNavigate, useLocation } from "react-router-dom";
-import { collection, query, where, onSnapshot } from "firebase/firestore";
+import { collection, onSnapshot, waitForPendingWrites } from "firebase/firestore";
 import { db } from "../firebase";
 import toast from "react-hot-toast";
 import { useAuth } from "../auth/AuthContext";
@@ -36,7 +36,7 @@ const SALES_DROPDOWN_LINKS = [
 ];
 
 export default function AdminLayout() {
-  const { profile, logout } = useAuth();
+  const { profile, role, loading, logout } = useAuth();
   const [showLogout, setShowLogout] = useState(false);
   const [tournamentOpen, setTournamentOpen] = useState(false);
   const [bookingOpen, setBookingOpen] = useState(false);
@@ -47,11 +47,42 @@ export default function AdminLayout() {
   const salesRef = useRef(null);
   const notifRef = useRef(null);
   const notifFirstSnapshot = useRef(true);
+  const notifOpenRef = useRef(false);
+  const bookingStatusByIdRef = useRef(new Map());
   const navigate = useNavigate();
   const location = useLocation();
 
   const [pendingBookingCount, setPendingBookingCount] = useState(0);
+  const [unseenBookingCount, setUnseenBookingCount] = useState(0);
   const [notifOpen, setNotifOpen] = useState(false);
+
+  // --- OFFLINE SUPPORT STATE ---
+  const [isOnline, setIsOnline] = useState(navigator.onLine);
+  const [hasPendingSync, setHasPendingSync] = useState(false);
+
+  // Monitor real-time connection status and handle pending sync queue
+  useEffect(() => {
+    const handleOnline = async () => {
+      setIsOnline(true);
+      setHasPendingSync(true); // Internet reconnected, checking queue
+      try {
+        // Wait until all offline queued writes are synced to Firebase
+        await waitForPendingWrites(db);
+      } catch (err) {
+        console.error("Offline sync error:", err);
+      }
+      setHasPendingSync(false); // Queue cleared
+    };
+    const handleOffline = () => setIsOnline(false);
+
+    window.addEventListener("online", handleOnline);
+    window.addEventListener("offline", handleOffline);
+    return () => {
+      window.removeEventListener("online", handleOnline);
+      window.removeEventListener("offline", handleOffline);
+    };
+  }, []);
+  // -----------------------------
 
   const tournamentNavActive = TOURNAMENT_SUBLINKS.some((s) => location.pathname === s.to);
   const bookingNavActive = BOOKING_SUBLINKS.some((s) => location.pathname === s.to);
@@ -82,6 +113,10 @@ export default function AdminLayout() {
   }, [mobileMenuOpen]);
 
   useEffect(() => {
+    notifOpenRef.current = notifOpen;
+  }, [notifOpen]);
+
+  useEffect(() => {
     function handleClickOutside(e) {
       if (tournamentRef.current && !tournamentRef.current.contains(e.target)) {
         setTournamentOpen(false);
@@ -102,28 +137,61 @@ export default function AdminLayout() {
 
   /** Pending court bookings — badge + toast when a new submission arrives */
   useEffect(() => {
-    const q = query(collection(db, "bookings"), where("status", "==", "Pending"));
+    if (loading || role !== "admin") {
+      setPendingBookingCount(0);
+      setUnseenBookingCount(0);
+      notifFirstSnapshot.current = true;
+      bookingStatusByIdRef.current = new Map();
+      return undefined;
+    }
+    const q = collection(db, "bookings");
     const unsub = onSnapshot(
       q,
       (snap) => {
-        setPendingBookingCount(snap.size);
+        const nextMap = bookingStatusByIdRef.current;
+        const normalizeStatus = (x) => String(x || "").trim().toLowerCase();
+        const isPending = (x) => normalizeStatus(x) === "pending";
+
+        const nextPendingCount = snap.docs.reduce(
+          (sum, d) => (isPending(d.data()?.status) ? sum + 1 : sum),
+          0
+        );
+        setPendingBookingCount(nextPendingCount);
+
         if (notifFirstSnapshot.current) {
+          snap.docs.forEach((d) => nextMap.set(d.id, normalizeStatus(d.data()?.status)));
           notifFirstSnapshot.current = false;
           return;
         }
         snap.docChanges().forEach((change) => {
-          if (change.type === "added") {
+          const id = change.doc.id;
+          const data = change.doc.data();
+          const nextStatus = normalizeStatus(data?.status);
+          const prevStatus = nextMap.get(id);
+          if (change.type === "removed") {
+            nextMap.delete(id);
+            return;
+          }
+          nextMap.set(id, nextStatus);
+          if (nextStatus === "pending" && prevStatus !== "pending") {
             const data = change.doc.data();
             const who = data.playerName || data.contactNumber || "Guest";
             const court = data.courtName || data.courtId || "Court";
+            if (!notifOpenRef.current) {
+              setUnseenBookingCount((n) => n + 1);
+            }
             toast.success(`New booking: ${who} — ${court}`, { duration: 6000 });
           }
         });
       },
-      (err) => console.error("Booking notifications listener:", err)
+      (err) => {
+        console.error("Booking notifications listener:", err);
+        setPendingBookingCount(0);
+        setUnseenBookingCount(0);
+      }
     );
     return () => unsub();
-  }, []);
+  }, [loading, role]);
 
   async function handleLogout() {
     await logout();
@@ -325,6 +393,25 @@ export default function AdminLayout() {
             </div>
           </div>
           <div className="flex items-center gap-2 sm:gap-4 shrink-0">
+            {/* OFFLINE STATUS INDICATOR */}
+            <div className="hidden lg:flex items-center border-r border-slate-800 pr-4 lg:pr-6">
+              {!isOnline ? (
+                <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-amber-500/10 border border-amber-500/20 text-amber-400 text-[10px] font-bold" title="Changes will sync automatically">
+                  <div className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse"></div>
+                  Offline Mode
+                </span>
+              ) : hasPendingSync ? (
+                <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-blue-500/10 border border-blue-500/20 text-blue-400 text-[10px] font-bold">
+                  <span className="material-symbols-outlined text-[12px] animate-spin">sync</span>
+                  Pending Sync Queue
+                </span>
+              ) : (
+                <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-[10px] font-bold">
+                  <div className="w-1.5 h-1.5 rounded-full bg-emerald-500"></div>
+                  Online
+                </span>
+              )}
+            </div>
             <div className="hidden md:flex flex-col items-end border-r border-slate-800 pr-4 lg:pr-6">
               <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Current Date</span>
               <span className="text-sm font-semibold text-slate-300 whitespace-nowrap">{currentDate}</span>
@@ -342,12 +429,18 @@ export default function AdminLayout() {
                   className="relative p-2 text-slate-400 hover:text-cyan-400 transition-colors"
                   aria-label={`Notifications${pendingBookingCount ? `, ${pendingBookingCount} pending bookings` : ""}`}
                   aria-expanded={notifOpen}
-                  onClick={() => setNotifOpen((o) => !o)}
+                  onClick={() => {
+                    setNotifOpen((o) => {
+                      const next = !o;
+                      if (next) setUnseenBookingCount(0);
+                      return next;
+                    });
+                  }}
                 >
                   <span className="material-symbols-outlined text-[22px] sm:text-[24px]">notifications</span>
-                  {pendingBookingCount > 0 && (
+                  {unseenBookingCount > 0 && (
                     <span className="absolute top-1 right-1 min-w-[18px] h-[18px] px-1 flex items-center justify-center rounded-full bg-cyan-500 text-[10px] font-bold text-slate-950 shadow">
-                      {pendingBookingCount > 99 ? "99+" : pendingBookingCount}
+                      {unseenBookingCount > 99 ? "99+" : unseenBookingCount}
                     </span>
                   )}
                 </button>

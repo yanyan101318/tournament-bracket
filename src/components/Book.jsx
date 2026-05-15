@@ -1,11 +1,14 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { useSearchParams, useNavigate, useLocation } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
+import { useOfflineSync } from "../hooks/useOfflineSync";
 import { db } from "../firebase";
 import "./book.css";
 import {
   collection,
   addDoc,
+  doc,
+  setDoc,
   query,
   where,
   getDocs,
@@ -86,7 +89,7 @@ export default function Book() {
   const [cashReceivedInput, setCashReceivedInput] = useState("");
   const [amountPaidInput, setAmountPaidInput] = useState("");
   const [receiptSnapshot, setReceiptSnapshot] = useState(null);
-  const [submitting, setSubmitting] = useState(false);
+  const { syncState, wrapSync, setSyncState } = useOfflineSync();
 
   const [form, setForm] = useState({
     courtId: courtParam || "",
@@ -426,8 +429,6 @@ export default function Book() {
       }
     }
 
-    setSubmitting(true);
-
     try {
       // Re-check overlaps against latest data so two admins cannot double-book the same range.
       const confSnap = await getDocs(
@@ -450,7 +451,6 @@ export default function Book() {
       if (!isSlotStartAvailableForDuration(form.timeSlot, form.duration, latestDay)) {
         setDayBookings(latestDay);
         toast.error("That time is no longer available. Please choose another slot.");
-        setSubmitting(false);
         return;
       }
 
@@ -512,7 +512,8 @@ export default function Book() {
               change: changeRounded,
             };
 
-      const bookingRef = await addDoc(collection(db, "bookings"), bookingData);
+      const bookingRef = doc(collection(db, "bookings"));
+      const paymentRef = doc(collection(db, "payments"));
 
       const paymentBase = {
         bookingId: bookingRef.id,
@@ -545,14 +546,24 @@ export default function Book() {
               change: changeRounded,
             };
 
-      await addDoc(collection(db, "payments"), paymentData);
+      const writePromises = Promise.all([
+        setDoc(bookingRef, bookingData),
+        setDoc(paymentRef, paymentData),
+        upsertCustomerAfterBooking(db, {
+          userId: user.uid,
+          fullName: form.playerName,
+          contactNumber: String(form.contactNumber).trim(),
+          email: String(form.email ?? "").trim() || null,
+          amountApplied: amountPaidRounded,
+        })
+      ]);
 
-      await upsertCustomerAfterBooking(db, {
-        userId: user.uid,
-        fullName: form.playerName,
-        contactNumber: String(form.contactNumber).trim(),
-        email: String(form.email ?? "").trim() || null,
-        amountApplied: amountPaidRounded,
+      await wrapSync(writePromises, {
+        successMsg: "Booking Synced Successfully",
+        offlineMsg: "Saved Offline — Will Sync Automatically",
+        errorMsg: "Booking Failed — Retry",
+        onSuccess: () => setStep(4),
+        onOfflineSuccess: () => setTimeout(() => setStep(4), 1000)
       });
 
       const paymentMethodLabel = form.paymentMethod === PAYMENT_CASH ? "Cash" : "GCash";
@@ -577,13 +588,12 @@ export default function Book() {
         customerPayStatus: payStatus,
       });
 
-      setStep(4);
-      toast.success("Booking submitted!");
     } catch (err) {
       console.error(err);
-      toast.error("Submission failed. Please try again.");
-    } finally {
-      setSubmitting(false);
+      if (syncState === "idle") {
+        setSyncState("error");
+        toast.error("Booking Failed — Retry");
+      }
     }
   };
 
@@ -1223,18 +1233,43 @@ export default function Book() {
               ) : (
                 <button
                   onClick={handleSubmit}
-                  disabled={submitting}
+                  disabled={syncState !== "idle" && syncState !== "error"}
                   className="btn-primary flex-1 py-3 flex items-center justify-center gap-2"
                 >
-                  {submitting ? (
+                  {syncState === "syncing" && (
                     <span className="flex items-center gap-2">
                       <svg className="animate-spin w-4 h-4" viewBox="0 0 24 24" fill="none">
                         <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                         <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4l3-3-3-3v4a8 8 0 00-8 8h4z" />
                       </svg>
-                      Submitting...
+                      Syncing Booking...
                     </span>
-                  ) : (
+                  )}
+                  {syncState === "offline-saved" && (
+                    <span className="flex items-center gap-2">
+                      <Check size={16} /> Saved Offline — Will Sync Automatically
+                    </span>
+                  )}
+                  {syncState === "reconnecting" && (
+                    <span className="flex items-center gap-2">
+                      <svg className="animate-spin w-4 h-4" viewBox="0 0 24 24" fill="none">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4l3-3-3-3v4a8 8 0 00-8 8h4z" />
+                      </svg>
+                      Syncing Pending Booking...
+                    </span>
+                  )}
+                  {syncState === "success" && (
+                    <span className="flex items-center gap-2">
+                      <Check size={16} /> Booking Synced Successfully
+                    </span>
+                  )}
+                  {syncState === "error" && (
+                    <span className="flex items-center gap-2">
+                      Booking Failed — Retry
+                    </span>
+                  )}
+                  {syncState === "idle" && (
                     <><Check size={16} /> Confirm Booking</>
                   )}
                 </button>

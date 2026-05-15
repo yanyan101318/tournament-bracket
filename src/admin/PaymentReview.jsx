@@ -6,6 +6,8 @@ import {
   doc, updateDoc, deleteDoc, Timestamp,
 } from "firebase/firestore";
 import { db } from "../firebase";
+import { useOfflineSync } from "../hooks/useOfflineSync";
+import Pagination from "./Pagination";
 
 const CUSTOMER_PAY_BADGE = { paid: "approved", partial: "pending", unpaid: "rejected" };
 
@@ -36,6 +38,9 @@ export default function PaymentReview() {
   const [loading, setLoading]   = useState(true);
   const [acting, setActing]     = useState(null);
   const [preview, setPreview]   = useState(null); // { payment, imageUrl }
+  const { wrapSync } = useOfflineSync();
+  const [page, setPage] = useState(1);
+  const PAGE_SIZE = 10;
 
   useEffect(() => {
     const v = searchParams.get("view");
@@ -45,8 +50,8 @@ export default function PaymentReview() {
 
   useEffect(() => {
     const q = query(collection(db,"payments"), orderBy("createdAt","desc"));
-    const unsub = onSnapshot(q, snap => {
-      setPayments(snap.docs.map(d=>({id:d.id,...d.data()})));
+    const unsub = onSnapshot(q, { includeMetadataChanges: true }, snap => {
+      setPayments(snap.docs.map(d=>({ id:d.id, hasPendingWrites: d.metadata.hasPendingWrites, ...d.data() })));
       setLoading(false);
     });
     return () => unsub();
@@ -66,9 +71,13 @@ export default function PaymentReview() {
   async function setStatus(id, status) {
     setActing(id);
     try {
-      await updateDoc(doc(db,"payments",id), {
+      const promise = updateDoc(doc(db,"payments",id), {
         paymentStatus: status,
         reviewedAt: Timestamp.now(),
+      });
+      await wrapSync(promise, {
+        successMsg: `Payment ${status}`,
+        offlineMsg: "Status Update Saved Offline — Pending Server Sync"
       });
     } catch(err) { console.error(err); }
     setActing(null);
@@ -87,10 +96,13 @@ export default function PaymentReview() {
     }
     setActing(id);
     try {
-      await deleteDoc(doc(db, "payments", id));
+      await wrapSync(deleteDoc(doc(db, "payments", id)), {
+        successMsg: "Payment deleted",
+        offlineMsg: "Action Queued for Sync",
+        errorMsg: "Could not delete this payment."
+      });
     } catch (err) {
       console.error(err);
-      window.alert("Could not delete this payment. Check your connection and permissions.");
     }
     setActing(null);
     setPreview(null);
@@ -103,6 +115,13 @@ export default function PaymentReview() {
       p.method?.toLowerCase().includes(search.toLowerCase());
     return matchFilter && matchSearch;
   });
+
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const safePage = Math.min(page, totalPages);
+  const pageCards = filtered.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
+
+  function handleFilter(k) { setFilter(k); setPage(1); }
+  function handleSearch(v) { setSearch(v); setPage(1); }
 
   const counts = {
     All:      payments.length,
@@ -127,21 +146,21 @@ export default function PaymentReview() {
       {/* Tabs */}
       <div className="ad-filter-tabs">
         {Object.entries(counts).map(([k,v])=>(
-          <button key={k} className={`ad-filter-tab ${filter===k?"active":""}`} onClick={()=>setFilter(k)}>
+          <button key={k} className={`ad-filter-tab ${filter===k?"active":""}`} onClick={()=>handleFilter(k)}>
             {k} <span className="ad-filter-count">{v}</span>
           </button>
         ))}
       </div>
 
       <div className="ad-search-row">
-        <input className="ad-search" value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search by name or method..."/>
+        <input className="ad-search" value={search} onChange={e=>handleSearch(e.target.value)} placeholder="Search by name or method..."/>
         <span className="ad-count">{filtered.length} payment{filtered.length!==1?"s":""}</span>
       </div>
 
       {/* Payment cards */}
       <div className="pr-grid">
         {filtered.length===0 && <div className="ad-empty">No payments found.</div>}
-        {filtered.map((p) => {
+        {pageCards.map((p) => {
           const payState = deriveCustomerStatus(p);
           return (
           <div key={p.id} className="pr-card">
@@ -181,8 +200,8 @@ export default function PaymentReview() {
                       : "Full payment"}
                 </span>
               </div>
-              <span className={`ad-badge ad-badge-${statusColor[p.paymentStatus]??"pending"}`}>
-                {p.paymentStatus ?? "Pending"}
+              <span className={`ad-badge ad-badge-${p.hasPendingWrites ? "pending" : (statusColor[p.paymentStatus]??"pending")}`}>
+                {p.hasPendingWrites ? "Pending Sync" : (p.paymentStatus ?? "Pending")}
               </span>
             </div>
 
@@ -215,6 +234,7 @@ export default function PaymentReview() {
           );
         })}
       </div>
+      <Pagination page={safePage} totalPages={totalPages} onPage={setPage} />
 
       {/* Image preview modal */}
       {preview && (

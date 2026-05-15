@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8" />
+  <title>Loading…</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: linear-gradient(135deg, #0a0f18 0%, #0f1520 100%);
+      color: #e2e8f0;
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+      user-select: none;
+      -webkit-app-region: drag;
+    }
+    .logo { font-size: 3.2rem; margin-bottom: 1rem;
+      filter: drop-shadow(0 0 18px rgba(200,230,58,0.55)); }
+    .app-name {
+      font-size: 1.35rem; font-weight: 800;
+      letter-spacing: 0.14em; color: #c8e63a;
+      text-transform: uppercase; margin-bottom: 0.3rem;
+    }
+    .app-sub { font-size: 0.75rem; color: #64748b;
+      letter-spacing: 0.06em; margin-bottom: 2rem; }
+    .track { width: 210px; height: 3px;
+      background: rgba(255,255,255,0.07); border-radius: 999px; overflow: hidden; }
+    .bar {
+      height: 100%; border-radius: 999px;
+      background: linear-gradient(90deg, #c8e63a, #22c55e);
+      animation: prog 2s ease-in-out infinite;
+    }
+    @keyframes prog {
+      0%   { width: 0%;   margin-left: 0%; }
+      50%  { width: 65%;  margin-left: 17%; }
+      100% { width: 0%;   margin-left: 100%; }
+    }
+    .ver { position: absolute; bottom: 12px;
+      font-size: 0.62rem; color: #1e293b; letter-spacing: 0.04em; }
+  </style>
+</head>
+<body>
+  <div class="logo">🏓</div>
+  <div class="app-name">Pickleball System</div>
+  <div class="app-sub">Management Suite — Loading</div>
+  <div class="track"><div class="bar"></div></div>
+  <div class="ver">v1.0.0 · Powered by Firebase</div>
+</body>
+</html>

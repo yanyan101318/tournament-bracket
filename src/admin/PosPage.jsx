@@ -9,12 +9,15 @@ import {
   orderBy,
   query,
   runTransaction,
+  writeBatch,
   serverTimestamp,
   updateDoc,
 } from "firebase/firestore";
+import { useOfflineSync } from "../hooks/useOfflineSync";
 import { db } from "../firebase";
 import toast from "react-hot-toast";
 import { buildReceiptHtml, formatReceiptCurrency, printReceiptHtml } from "./posReceipt";
+import Pagination from "./Pagination";
 
 function productStock(p) {
   const n = p?.stock ?? p?.quantity ?? p?.qty;
@@ -48,14 +51,17 @@ export default function PosPage() {
 
   const [productModal, setProductModal] = useState(null);
   const [productForm, setProductForm] = useState(BLANK_PRODUCT_FORM);
-  const [productSaving, setProductSaving] = useState(false);
+  const { syncState, wrapSync } = useOfflineSync();
+  const [productPage, setProductPage] = useState(1);
+  const PRODUCT_PAGE_SIZE = 10;
 
   useEffect(() => {
     const q = query(collection(db, "products"), orderBy("name"));
     const unsub = onSnapshot(
       q,
+      { includeMetadataChanges: true },
       (snap) => {
-        setProducts(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+        setProducts(snap.docs.map((d) => ({ id: d.id, hasPendingWrites: d.metadata.hasPendingWrites, ...d.data() })));
         setLoading(false);
       },
       (err) => {
@@ -87,6 +93,13 @@ export default function PosPage() {
       return name.includes(q) || cat.includes(q);
     });
   }, [products, search, category]);
+
+  const productTotalPages = Math.max(1, Math.ceil(filteredProducts.length / PRODUCT_PAGE_SIZE));
+  const productSafePage = Math.min(productPage, productTotalPages);
+  const pageProducts = filteredProducts.slice((productSafePage - 1) * PRODUCT_PAGE_SIZE, productSafePage * PRODUCT_PAGE_SIZE);
+
+  function handleProductSearch(v) { setSearch(v); setProductPage(1); }
+  function handleProductCategory(c) { setCategory(c); setProductPage(1); }
 
   const cartLines = useMemo(() => {
     const lines = [];
@@ -179,10 +192,10 @@ export default function PosPage() {
       toast.error("Product name is required");
       return;
     }
-    setProductSaving(true);
     try {
+      let promise;
       if (productModal === "new") {
-        await addDoc(collection(db, "products"), {
+        promise = addDoc(collection(db, "products"), {
           name,
           category,
           price,
@@ -190,40 +203,45 @@ export default function PosPage() {
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
         });
-        toast.success("Product added");
       } else if (productModal) {
-        await updateDoc(doc(db, "products", productModal), {
+        promise = updateDoc(doc(db, "products", productModal), {
           name,
           category,
           price,
           stock,
           updatedAt: serverTimestamp(),
         });
-        toast.success("Product updated");
       }
+      
+      await wrapSync(promise, {
+        successMsg: productModal === "new" ? "Product added" : "Product updated",
+        offlineMsg: "Equipment Changes Saved Offline",
+        errorMsg: "Could not save product"
+      });
+
       setProductModal(null);
       setProductForm(BLANK_PRODUCT_FORM);
     } catch (err) {
       console.error(err);
-      toast.error("Could not save product");
     }
-    setProductSaving(false);
   }
 
   async function removeProduct(p) {
     if (!window.confirm(`Delete "${p.name || "this product"}"? This cannot be undone.`)) return;
     try {
-      await deleteDoc(doc(db, "products", p.id));
+      await wrapSync(deleteDoc(doc(db, "products", p.id)), {
+        successMsg: "Product deleted",
+        offlineMsg: "Action Queued for Sync",
+        errorMsg: "Could not delete product"
+      });
       setCart((c) => {
         const n = { ...c };
         delete n[p.id];
         return n;
       });
-      toast.success("Product deleted");
       setProductModal(null);
     } catch (err) {
       console.error(err);
-      toast.error("Could not delete product");
     }
   }
 
@@ -241,83 +259,66 @@ export default function PosPage() {
       }
     }
 
-    setSubmitting(true);
     try {
-        const txResult = await runTransaction(db, async (transaction) => {
-        const lineWrites = [];
-        for (const line of cartLines) {
-          const ref = doc(db, "products", line.productId);
-          const snap = await transaction.get(ref);
-          if (!snap.exists()) throw new Error(`Product removed: ${line.name}`);
-          const stock = productStock({ ...snap.data(), id: snap.id });
-          if (stock < line.quantity) throw new Error(`Not enough stock for ${line.name}`);
-          const data = snap.data();
-          const usesStock = Object.prototype.hasOwnProperty.call(data, "stock");
-          lineWrites.push({ ref, qty: line.quantity, usesStock });
-        }
+      const batch = writeBatch(db);
+      
+      const txRef = doc(collection(db, "salesTransactions"));
+      const cashRec = paymentMethod === "Cash" ? cashNum : cartTotal;
+      const ch = paymentMethod === "Cash" ? roundMoney(Math.max(0, cashRec - cartTotal)) : 0;
 
-        const txRef = doc(collection(db, "salesTransactions"));
-        const cashRec = paymentMethod === "Cash" ? cashNum : cartTotal;
-        const ch = paymentMethod === "Cash" ? roundMoney(Math.max(0, cashRec - cartTotal)) : 0;
-
-        transaction.set(txRef, {
-          type: "pos",
-          items: cartLines.map((l) => ({
-            productId: l.productId,
-            name: l.name,
-            category: l.category,
-            unitPrice: l.unitPrice,
-            quantity: l.quantity,
-            lineTotal: l.lineTotal,
-          })),
-          total: cartTotal,
-          paymentMethod,
-          cashReceived: cashRec,
-          change: ch,
-          createdAt: serverTimestamp(),
-        });
-
-        for (const { ref, qty, usesStock } of lineWrites) {
-          transaction.update(ref, {
-            [usesStock ? "stock" : "quantity"]: increment(-qty),
-            updatedAt: serverTimestamp(),
-          });
-        }
-
-        return { id: txRef.id, cashReceived: cashRec, change: ch };
+      batch.set(txRef, {
+        type: "pos",
+        items: cartLines.map((l) => ({
+          productId: l.productId,
+          name: l.name,
+          category: l.category,
+          unitPrice: l.unitPrice,
+          quantity: l.quantity,
+          lineTotal: l.lineTotal,
+        })),
+        total: cartTotal,
+        paymentMethod,
+        cashReceived: cashRec,
+        change: ch,
+        createdAt: serverTimestamp(),
       });
 
-      toast.success("Sale completed");
+      for (const line of cartLines) {
+        const p = products.find((x) => x.id === line.productId);
+        const usesStock = p && Object.prototype.hasOwnProperty.call(p, "stock");
+        const ref = doc(db, "products", line.productId);
+        batch.update(ref, {
+          [usesStock ? "stock" : "quantity"]: increment(-line.quantity),
+          updatedAt: serverTimestamp(),
+        });
+      }
+
+      await wrapSync(batch.commit(), {
+        successMsg: "Sale completed",
+        offlineMsg: "Payment Saved Offline — Pending Server Sync",
+        errorMsg: "Checkout failed"
+      });
+
       setCart({});
       setCashReceived("");
       setCheckoutOpen(false);
 
       const receiptPayload = {
-        transactionId: txResult.id,
+        transactionId: txRef.id,
         createdAt: new Date(),
         items: cartLines,
         total: cartTotal,
         paymentMethod,
-        cashReceived: txResult.cashReceived,
-        change: txResult.change,
+        cashReceived: cashRec,
+        change: ch,
       };
       setLastReceipt(receiptPayload);
 
-      const html = buildReceiptHtml({
-        transactionId: txResult.id,
-        createdAt: new Date(),
-        items: cartLines,
-        total: cartTotal,
-        paymentMethod,
-        cashReceived: txResult.cashReceived,
-        change: txResult.change,
-      });
+      const html = buildReceiptHtml(receiptPayload);
       printReceiptHtml(html);
     } catch (err) {
       console.error(err);
-      toast.error(err?.message || "Checkout failed");
     }
-    setSubmitting(false);
   }
 
   if (loading) {
@@ -350,7 +351,7 @@ export default function PosPage() {
               className="af-input flex-1 min-w-0 bg-[var(--ad-surface)] border-[var(--ad-border)] text-[var(--ad-text)] placeholder:text-slate-500"
               placeholder="Search products…"
               value={search}
-              onChange={(e) => setSearch(e.target.value)}
+              onChange={(e) => handleProductSearch(e.target.value)}
             />
           </div>
           <div className="flex flex-wrap gap-2">
@@ -363,7 +364,7 @@ export default function PosPage() {
                     ? "border-cyan-400/60 bg-cyan-500/15 text-cyan-300 shadow-[0_0_16px_rgba(34,211,238,0.15)]"
                     : "border-[var(--ad-border)] text-[var(--ad-muted)] hover:border-slate-500"
                 }`}
-                onClick={() => setCategory(c)}
+                onClick={() => handleProductCategory(c)}
               >
                 {c}
               </button>
@@ -378,7 +379,7 @@ export default function PosPage() {
                 price, stock).
               </div>
             )}
-            {filteredProducts.map((p) => {
+            {pageProducts.map((p) => {
               const stock = productStock(p);
               const price = productPrice(p);
               const inCart = cart[p.id] || 0;
@@ -393,7 +394,10 @@ export default function PosPage() {
                 >
                   <div className="flex justify-between gap-2 items-start">
                     <div className="min-w-0">
-                      <div className="font-bold text-[var(--ad-text)] truncate">{p.name || "Unnamed"}</div>
+                      <div className="flex items-center gap-2">
+                        <div className="font-bold text-[var(--ad-text)] truncate">{p.name || "Unnamed"}</div>
+                        {p.hasPendingWrites && <span className="ad-badge ad-badge-pending text-[10px] px-1 py-0 border border-amber-500/20">Pending Sync</span>}
+                      </div>
                       <div className="text-[11px] text-[var(--ad-muted)]">{p.category || "—"}</div>
                     </div>
                     <div className="text-right shrink-0">
@@ -431,6 +435,7 @@ export default function PosPage() {
               );
             })}
           </div>
+          <Pagination page={productSafePage} totalPages={productTotalPages} onPage={setProductPage} />
         </section>
 
         <aside className="xl:col-span-5 xl:sticky xl:top-24 space-y-4">
@@ -543,7 +548,7 @@ export default function PosPage() {
       {productModal && (
         <div
           className="ad-modal-backdrop"
-          onClick={(e) => e.target === e.currentTarget && !productSaving && setProductModal(null)}
+          onClick={(e) => e.target === e.currentTarget && syncState === "idle" && setProductModal(null)}
         >
           <div className="ad-modal max-w-md border-cyan-500/20 shadow-[0_0_40px_rgba(34,211,238,0.12)]">
             <div className="ad-modal-header">
@@ -551,7 +556,7 @@ export default function PosPage() {
               <button
                 type="button"
                 className="ad-modal-close"
-                onClick={() => !productSaving && setProductModal(null)}
+                onClick={() => syncState === "idle" && setProductModal(null)}
               >
                 ✕
               </button>
@@ -607,7 +612,7 @@ export default function PosPage() {
                   <button
                     type="button"
                     className="ad-btn ad-btn-danger"
-                    disabled={productSaving}
+                    disabled={syncState !== "idle" && syncState !== "error"}
                     onClick={() => {
                       const p = products.find((x) => x.id === productModal);
                       if (p) removeProduct(p);
@@ -623,12 +628,12 @@ export default function PosPage() {
                     type="button"
                     className="ad-btn ad-btn-outline"
                     onClick={() => setProductModal(null)}
-                    disabled={productSaving}
+                    disabled={syncState !== "idle" && syncState !== "error"}
                   >
                     Cancel
                   </button>
-                  <button type="submit" className="ad-btn ad-btn-primary" disabled={productSaving}>
-                    {productSaving ? "Saving…" : productModal === "new" ? "Add product" : "Save changes"}
+                  <button type="submit" className="ad-btn ad-btn-primary" disabled={syncState !== "idle" && syncState !== "error"}>
+                    {syncState === "syncing" ? "Saving…" : syncState === "offline-saved" ? "Saved Offline" : productModal === "new" ? "Add product" : "Save changes"}
                   </button>
                 </div>
               </div>
@@ -640,12 +645,12 @@ export default function PosPage() {
       {checkoutOpen && (
         <div
           className="ad-modal-backdrop"
-          onClick={(e) => e.target === e.currentTarget && !submitting && setCheckoutOpen(false)}
+          onClick={(e) => e.target === e.currentTarget && syncState === "idle" && setCheckoutOpen(false)}
         >
           <div className="ad-modal max-w-md shadow-[0_0_40px_rgba(34,211,238,0.12)] border-cyan-500/20">
             <div className="ad-modal-header">
               <h3>Complete sale</h3>
-              <button type="button" className="ad-modal-close" onClick={() => !submitting && setCheckoutOpen(false)}>
+              <button type="button" className="ad-modal-close" onClick={() => syncState === "idle" && setCheckoutOpen(false)}>
                 ✕
               </button>
             </div>
@@ -697,11 +702,11 @@ export default function PosPage() {
                 </>
               )}
               <div className="ad-modal-footer">
-                <button type="button" className="ad-btn ad-btn-outline" onClick={() => setCheckoutOpen(false)} disabled={submitting}>
+                <button type="button" className="ad-btn ad-btn-outline" onClick={() => setCheckoutOpen(false)} disabled={syncState !== "idle" && syncState !== "error"}>
                   Cancel
                 </button>
-                <button type="submit" className="ad-btn ad-btn-primary" disabled={submitting}>
-                  {submitting ? "Processing…" : "Confirm & print receipt"}
+                <button type="submit" className="ad-btn ad-btn-primary" disabled={syncState !== "idle" && syncState !== "error"}>
+                  {syncState === "syncing" ? "Processing…" : syncState === "offline-saved" ? "Saved Offline" : "Confirm & print receipt"}
                 </button>
               </div>
             </form>

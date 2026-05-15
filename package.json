@@ -1,7 +1,11 @@
 {
   "name": "tournament-bracket",
-  "version": "0.1.0",
+  "version": "1.0.0",
+  "description": "Pickleball Management System",
+  "author": "Pickleball Admin",
   "private": true,
+  "main": "electron.js",
+  "homepage": ".",
   "dependencies": {
     "@testing-library/dom": "^10.4.1",
     "@testing-library/jest-dom": "^6.9.1",
@@ -30,7 +34,46 @@
     "start": "react-scripts start",
     "build": "react-scripts build",
     "test": "react-scripts test",
-    "eject": "react-scripts eject"
+    "eject": "react-scripts eject",
+    "electron-start": "concurrently \"cross-env BROWSER=none npm start\" \"wait-on http://localhost:3000 && electron .\"",
+    "electron-build": "npm run build && electron-builder --win",
+    "dist": "npm run build && electron-builder --win --publish=never"
+  },
+  "build": {
+    "extends": null,
+    "npmRebuild": false,
+    "appId": "com.pickleball.management",
+    "productName": "PickleballSystem",
+    "copyright": "Copyright © 2025 Pickleball Admin",
+    "files": [
+      "build/**/*",
+      "electron.js",
+      "assets/**/*"
+    ],
+    "directories": {
+      "output": "dist-electron"
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "assets/icon.png",
+      "requestedExecutionLevel": "asInvoker"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Pickleball System",
+      "artifactName": "PickleballSystemSetup.exe",
+      "deleteAppDataOnUninstall": false
+    }
   },
   "eslintConfig": {
     "extends": [
@@ -52,6 +95,11 @@
   },
   "devDependencies": {
     "autoprefixer": "^10.4.27",
-    "postcss": "^8.5.8"
+    "concurrently": "^9.1.2",
+    "cross-env": "^7.0.3",
+    "electron": "^33.4.0",
+    "electron-builder": "^25.1.8",
+    "postcss": "^8.5.8",
+    "wait-on": "^8.0.3"
   }
 }
