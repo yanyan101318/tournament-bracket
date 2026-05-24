@@ -649,6 +649,8 @@ export default function PaddleStackingPage() {
             playerSlots: peek.playerSlots,
             startedAt: Timestamp.now(),
             assignSource: "fifo",
+            scoreA: 0,
+            scoreB: 0,
           }
         : c
     );
@@ -809,6 +811,12 @@ export default function PaddleStackingPage() {
               ))}
             </select>
           </div>
+          <a href="/paddle-viewer" target="_blank" rel="noreferrer" className="ad-btn ad-btn-primary ad-btn-sm flex items-center gap-1">
+            <span className="text-[10px] uppercase">📺 Viewer</span>
+          </a>
+          <a href="/paddle-score" target="_blank" rel="noreferrer" className="ad-btn ad-btn-primary ad-btn-sm flex items-center gap-1">
+            <span className="text-[10px] uppercase">📱 Scorer</span>
+          </a>
           <button type="button" className="ad-btn ad-btn-outline ad-btn-sm" onClick={resetSession}>
             Reset session
           </button>

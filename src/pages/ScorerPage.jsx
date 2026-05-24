@@ -59,6 +59,9 @@ export default function ScorerPage() {
   const [flashB, setFlashB]             = useState(null);
   const [toast, setToast]               = useState(null);
   const [showRules, setShowRules]       = useState(false);
+  const [enteredPin, setEnteredPin]     = useState("");
+  const [pinError, setPinError]         = useState("");
+  const [hasPinAccess, setHasPinAccess] = useState(() => localStorage.getItem(`scorer_access_${matchId}`));
   const undoStackRef                  = useRef([]);
   const [rallyUndoDepth, setRallyUndoDepth] = useState(0);
   const [scoringMode, setScoringMode]   = useState(() =>
@@ -129,6 +132,8 @@ export default function ScorerPage() {
       setLocalB(snap.localB);
       const m = {
         ...match,
+        scoreA: snap.localA,
+        scoreB: snap.localB,
         sets: [...match.sets],
         currentGame: snap.currentGame ? { ...snap.currentGame } : null,
       };
@@ -192,6 +197,8 @@ export default function ScorerPage() {
         setLocalB(newScoreB);
         recordSetWin(m, result.winner, { [m.matchId]: m }, result.scoreA, result.scoreB, scoringMode);
 
+        m.scoreA = 0;
+        m.scoreB = 0;
         await updateMatch(tournamentId, m);
 
         if (m.winner && m.nextMatchId) {
@@ -219,6 +226,8 @@ export default function ScorerPage() {
       }
 
       if (result.fault) {
+        m.scoreA = newScoreA;
+        m.scoreB = newScoreB;
         await updateMatch(tournamentId, m);
         const srv = m.currentGame.servingTeam === "A" ? match.teamA : match.teamB;
         const srvLabel = m.currentGame.firstServer ? "1st Serve" : "2nd Serve";
@@ -229,6 +238,8 @@ export default function ScorerPage() {
 
       setLocalA(newScoreA);
       setLocalB(newScoreB);
+      m.scoreA = newScoreA;
+      m.scoreB = newScoreB;
       await updateMatch(tournamentId, m);
       triggerFlash(scoringTeam, "plus");
       showToast(`Point: ${match.teamA} ${newScoreA} - ${match.teamB} ${newScoreB}`);
@@ -293,6 +304,83 @@ export default function ScorerPage() {
     if (format === "bo3") return "Best of 3";
     if (format === "bo5") return "Best of 5";
     return "Single Game";
+  }
+
+  // --- PIN ACCESS LOGIC ---
+  const isMatchFinished = !!match?.winner;
+  const requiresPin = !!match?.pinCode;
+  const isAuthorized = !requiresPin || hasPinAccess === match.pinCode;
+
+  async function handlePinSubmit(e) {
+    e.preventDefault();
+    if (enteredPin === match.pinCode) {
+      if (match.pinStatus === "used" && hasPinAccess !== match.pinCode) {
+        setPinError("This PIN has already been used by another device.");
+        return;
+      }
+      if (match.pinStatus === "expired" || isMatchFinished) {
+        setPinError("This access link has expired.");
+        return;
+      }
+      
+      setPinError("");
+      localStorage.setItem(`scorer_access_${matchId}`, match.pinCode);
+      setHasPinAccess(match.pinCode);
+      
+      try {
+        await updateMatch(tournamentId, {
+          ...match,
+          pinStatus: "used",
+          usedAt: new Date().toISOString()
+        });
+      } catch (err) {
+        console.error("Failed to update PIN status", err);
+      }
+    } else {
+      setPinError("Incorrect PIN.");
+    }
+  }
+
+  if (requiresPin && !isAuthorized) {
+    return (
+      <div className="sp-page" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', background: 'var(--bg)' }}>
+        <div style={{ background: 'var(--surface2)', padding: '2rem', borderRadius: '16px', border: '1px solid var(--border)', maxWidth: '400px', width: '90%', textAlign: 'center', boxShadow: '0 8px 32px rgba(0,0,0,0.4)' }}>
+          <div className="sp-ball-icon" style={{ display: 'flex', justifyContent: 'center', marginBottom: '1.2rem' }}><PickleballSVG size={50}/></div>
+          <h2 style={{ color: 'var(--text)', marginBottom: '0.5rem', fontSize: '1.5rem', fontWeight: 800 }}>Scorer Access</h2>
+          
+          {isMatchFinished || match.pinStatus === "expired" ? (
+            <p style={{ color: '#ef4444', fontWeight: 'bold', marginTop: '1rem' }}>This scorer access link has expired because the match is already completed.</p>
+          ) : match.pinStatus === "used" ? (
+            <p style={{ color: '#ef4444', fontWeight: 'bold', marginTop: '1rem' }}>This PIN has already been used by another device.</p>
+          ) : (
+            <>
+              <p style={{ color: 'var(--text-muted)', marginBottom: '1.5rem', fontSize: '0.95rem' }}>Please enter the 6-digit PIN to access this match's scorer interface.</p>
+              <form onSubmit={handlePinSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                <input 
+                  type="text" 
+                  maxLength={6}
+                  value={enteredPin}
+                  onChange={(e) => setEnteredPin(e.target.value.replace(/\D/g, ''))}
+                  placeholder="------"
+                  style={{ 
+                    fontSize: '2.5rem', textAlign: 'center', letterSpacing: '12px', padding: '1rem 0',
+                    background: 'rgba(0,0,0,0.3)', border: '2px solid var(--border)', borderRadius: '8px', color: 'var(--pickle)', fontWeight: 'bold', fontFamily: 'monospace', width: '100%' 
+                  }}
+                  autoFocus
+                />
+                {pinError && <div style={{ color: '#ef4444', fontSize: '0.9rem', fontWeight: 'bold' }}>{pinError}</div>}
+                <button type="submit" disabled={enteredPin.length !== 6} style={{ 
+                  padding: '1rem', background: enteredPin.length === 6 ? 'var(--pickle)' : 'rgba(200,230,58,0.3)', color: '#000', border: 'none', borderRadius: '8px', 
+                  fontSize: '1.1rem', fontWeight: 'bold', cursor: enteredPin.length === 6 ? 'pointer' : 'not-allowed', marginTop: '0.5rem', transition: 'background 0.2s' 
+                }}>
+                  Verify PIN
+                </button>
+              </form>
+            </>
+          )}
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -447,6 +535,34 @@ export default function ScorerPage() {
                   </button>
                 </div>
               </div>
+              <button
+                type="button"
+                onClick={async () => {
+                  const input = window.prompt("Enter court number (e.g. 1, 2, A):", match?.courtNumber || "");
+                  if (input !== null) {
+                    setSaving(true);
+                    try {
+                      await updateMatch(tournamentId, { ...match, courtNumber: input.trim() });
+                    } catch (e) {
+                      console.error(e);
+                    }
+                    setSaving(false);
+                  }
+                }}
+                disabled={saving}
+                style={{
+                  padding: "8px 16px",
+                  fontSize: "0.82rem",
+                  fontWeight: 700,
+                  borderRadius: "10px",
+                  border: "1px solid rgba(255,255,255,0.2)",
+                  background: "transparent",
+                  color: "var(--text)",
+                  cursor: saving ? "not-allowed" : "pointer",
+                }}
+              >
+                {match?.courtNumber ? `Court: ${match.courtNumber}` : "Assign Court"}
+              </button>
               <button
                 type="button"
                 onClick={() => {

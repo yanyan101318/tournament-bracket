@@ -12,7 +12,6 @@ import AdminLayout          from "./admin/AdminLayout";
 import AdminDashboard       from "./admin/AdminDashboard";
 import CourtManager         from "./admin/CourtManager";
 import BookingManager       from "./admin/BookingManager";
-import PaymentReview        from "./admin/PaymentReview";
 import Analytics            from "./admin/Analytics";
 import CrmPage               from "./admin/CrmPage";
 import AnnouncementManager  from "./admin/AnnouncementManager";
@@ -27,6 +26,9 @@ import SalesHistoryPage     from "./admin/SalesHistoryPage";
 // Tournament public pages (scorer / viewer)
 import ScorerPage from "./pages/ScorerPage";
 import ViewerPage from "./pages/ViewerPage";
+import OrderPage from "./pages/OrderPage";
+import PaddleViewerPage from "./pages/PaddleViewerPage";
+import PaddleScorerPage from "./pages/PaddleScorerPage";
 
 import "./App.css";
 import "./admin/admin.css";
@@ -49,9 +51,12 @@ export default function App() {
           <Route path="/login"    element={<LoginPage/>}/>
           <Route path="/register" element={<RegisterPage/>}/>
 
-          {/* ── PUBLIC TOURNAMENT VIEWS ── */}
+          {/* ── PUBLIC TOURNAMENT VIEWS & ORDERING ── */}
           <Route path="/bracket/:tournamentId"           element={<ViewerPage/>}/>
           <Route path="/score/:tournamentId/:matchId"    element={<ScorerPage/>}/>
+          <Route path="/order"                           element={<OrderPage/>}/>
+          <Route path="/paddle-viewer"                   element={<PaddleViewerPage/>}/>
+          <Route path="/paddle-score/:courtId?"          element={<PaddleScorerPage/>}/>
 
           {/* ── ADMIN PANEL ── */}
           <Route path="/admin" element={
@@ -66,7 +71,6 @@ export default function App() {
             <Route path="courts"        element={<CourtManager/>}/>
             <Route path="bookings"      element={<BookingManager/>}/>
             <Route path="crm"           element={<CrmPage/>}/>
-            <Route path="payments"      element={<PaymentReview/>}/>
             <Route path="pos"           element={<PosPage/>}/>
             <Route path="sales-history" element={<SalesHistoryPage/>}/>
             <Route path="tournament"    element={<AdminTournament/>}/>

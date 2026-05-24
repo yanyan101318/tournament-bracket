@@ -6,7 +6,17 @@ export function formatReceiptCurrency(n) {
   return `₱${v.toFixed(2)}`;
 }
 
-export function buildReceiptHtml({ transactionId, createdAt, items, total, paymentMethod, cashReceived, change }) {
+export function buildReceiptHtml({
+  transactionId,
+  createdAt,
+  items,
+  total,
+  paymentMethod,
+  cashReceived,
+  change,
+  headerTitle = "RANAW PICKLEBALL COURT",
+  headerLines = [],
+}) {
   const when =
     createdAt instanceof Date
       ? createdAt.toLocaleString()
@@ -16,6 +26,10 @@ export function buildReceiptHtml({ transactionId, createdAt, items, total, payme
       (l) =>
         `<tr><td>${escapeHtml(l.name)}</td><td class="num">${l.quantity}</td><td class="num">${formatReceiptCurrency(l.lineTotal ?? (Number(l.unitPrice) || 0) * (Number(l.quantity) || 0))}</td></tr>`
     ) ?? [];
+  const extraHeaderHtml = (headerLines || [])
+    .filter(Boolean)
+    .map((line) => `<div class="muted">${escapeHtml(line)}</div>`)
+    .join("");
   return `<!DOCTYPE html><html><head><meta charset="utf-8"/><title>Receipt ${escapeHtml(transactionId)}</title>
 <style>
   /* Narrow receipt width + height grows with content (less blank paper on Chromium/Edge) */
@@ -113,8 +127,9 @@ export function buildReceiptHtml({ transactionId, createdAt, items, total, payme
   }
 </style></head><body>
 <div class="wrap">
-<h1>PicklePro · Receipt</h1>
+<h1>${escapeHtml(headerTitle)}</h1>
 <div class="muted">${escapeHtml(when)}</div>
+${extraHeaderHtml}
 <div class="tid">ID ${escapeHtml(transactionId)}</div>
 <table><thead><tr><th>Item</th><th class="num">Qty</th><th class="num">Amt</th></tr></thead><tbody>${rows.join("")}</tbody></table>
 <hr class="sep" />

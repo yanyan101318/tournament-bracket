@@ -25,6 +25,10 @@ export default function SalesHistoryPage() {
   const PAGE_SIZE = 10;
 
   useEffect(() => {
+    document.title = "RANAW PICKLEBALL COURT | Sales History";
+  }, []);
+
+  useEffect(() => {
     const q = query(collection(db, "salesTransactions"), orderBy("createdAt", "desc"), limit(500));
     const unsub = onSnapshot(
       q,

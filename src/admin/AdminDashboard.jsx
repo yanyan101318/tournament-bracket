@@ -63,6 +63,10 @@ export default function AdminDashboard() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    document.title = "RANAW PICKLEBALL COURT | Dashboard";
+  }, []);
+
+  useEffect(() => {
     async function fetchData() {
       try {
         const today = new Date();
@@ -119,7 +123,7 @@ export default function AdminDashboard() {
       <div className="mb-6 flex flex-col md:flex-row md:items-end justify-between gap-4">
         <div className="space-y-1">
           <h1 className="text-2xl md:text-3xl font-black text-white tracking-tight">
-            {greeting}, {profile?.name?.split(" ")[0] ?? "Ian"} 👋
+            {greeting}, {profile?.name?.split(" ")[0] ?? "Ian"} 
           </h1>
           <p className="text-sm text-slate-400">Key numbers for today. Details live under Analytics.</p>
         </div>

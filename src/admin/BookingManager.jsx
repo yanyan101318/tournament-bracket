@@ -18,6 +18,9 @@ import { roundMoney } from "../lib/bookingMoney";
 import { resolveCustomerPayStatus, PLAN_FULL } from "../lib/bookingPayment";
 import toast from "react-hot-toast";
 import { useOfflineSync } from "../hooks/useOfflineSync";
+import ReceiptPrint from "../components/ReceiptPrint";
+import { sendBookingSMS } from "../lib/smsService";
+import { resolveBookingContactNumber } from "../lib/resolveContactNumber";
 
 const STATUS_COLORS = { Pending:"pending", Approved:"approved", Cancelled:"rejected" };
 const PAY_STATUS_BADGE = { paid: "approved", partial: "pending", unpaid: "rejected" };
@@ -45,7 +48,7 @@ export default function BookingManager() {
   const [bookings, setBookings] = useState([]);
   const [filter, setFilter]     = useState("All");
   const [search, setSearch]     = useState("");
-  const [sortByDate, setSortByDate] = useState("date_desc");
+  const [sortByDate, setSortByDate] = useState("created_desc");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const [page, setPage] = useState(1);
@@ -56,7 +59,16 @@ export default function BookingManager() {
   const [extending, setExtending] = useState(false);
   const [balanceModal, setBalanceModal] = useState(EMPTY_BALANCE_MODAL);
   const [payStatusDraft, setPayStatusDraft] = useState("");
+  const [printData, setPrintData] = useState(null);
+  const [linkedPayment, setLinkedPayment] = useState(null);
+  const [zoomImage, setZoomImage] = useState(null);
+  const [rejectReasonModal, setRejectReasonModal] = useState({ open: false, reason: "" });
+  const [resolvedContact, setResolvedContact] = useState(null);
   const { wrapSync } = useOfflineSync();
+
+  useEffect(() => {
+    document.title = "RANAW PICKLEBALL COURT | Booking Management";
+  }, []);
 
   useEffect(() => {
     const q = query(collection(db,"bookings"), orderBy("createdAt","desc"));
@@ -81,6 +93,18 @@ export default function BookingManager() {
 
   useEffect(() => {
     if (!selected) {
+      setResolvedContact(null);
+      return;
+    }
+    let cancelled = false;
+    resolveBookingContactNumber(db, selected).then((phone) => {
+      if (!cancelled) setResolvedContact(phone);
+    });
+    return () => { cancelled = true; };
+  }, [selected?.id, selected?.contactNumber, selected?.userId]);
+
+  useEffect(() => {
+    if (!selected) {
       setPayStatusDraft("");
       return;
     }
@@ -95,6 +119,27 @@ export default function BookingManager() {
   useEffect(() => {
     setPage(1);
   }, [filter, search, sortByDate, dateFrom, dateTo]);
+
+  useEffect(() => {
+    if (!selected) {
+      setLinkedPayment(null);
+      setZoomImage(null);
+      setRejectReasonModal({ open: false, reason: "" });
+      return;
+    }
+    const q = query(collection(db, "payments"), where("bookingId", "==", selected.id));
+    const unsub = onSnapshot(q, (snap) => {
+      if (!snap.empty) {
+        setLinkedPayment({ id: snap.docs[0].id, ...snap.docs[0].data() });
+      } else {
+        setLinkedPayment(null);
+      }
+    }, (err) => {
+      console.error("Payment listener error:", err);
+      toast.error("Failed to load payment data");
+    });
+    return () => unsub();
+  }, [selected]);
 
   function applyDatePreset(preset) {
     const today = new Date();
@@ -155,11 +200,20 @@ export default function BookingManager() {
   async function setStatus(id, status) {
     setActing(id);
     try {
-      const promise = updateDoc(doc(db,"bookings",id), {
+      const batch = writeBatch(db);
+      batch.update(doc(db,"bookings",id), {
         status,
         reviewedAt: Timestamp.now(),
       });
-      await wrapSync(promise, {
+      
+      if (status === "Cancelled") {
+        const paySnap = await getDocs(query(collection(db, "payments"), where("bookingId", "==", id)));
+        paySnap.forEach(d => {
+          batch.update(d.ref, { paymentStatus: "Cancelled" });
+        });
+      }
+
+      await wrapSync(batch.commit(), {
         successMsg: `Booking ${status}`,
         offlineMsg: "Action Queued for Sync"
       });
@@ -453,6 +507,140 @@ export default function BookingManager() {
     setSelected(null);
   }
 
+  async function handlePrintReceipt(b) {
+    const receiptId = "RCPT-" + b.id.substring(0, 5).toUpperCase() + "-" + Math.floor(100 + Math.random() * 900);
+    const printedBy = "Admin";
+    
+    setActing(b.id);
+    try {
+      await updateDoc(doc(db, "bookings", b.id), {
+        latestReceiptId: receiptId,
+        lastPrintedAt: Timestamp.now(),
+        lastPrintedBy: printedBy
+      });
+    } catch (err) {
+      console.error("Failed to log receipt print", err);
+    }
+    setActing(null);
+    setPrintData({ booking: b, receiptId, printedBy });
+  }
+
+  async function approvePayment() {
+    if (!linkedPayment) return;
+    setActing("payment_approve");
+    try {
+      const batch = writeBatch(db);
+      batch.update(doc(db, "payments", linkedPayment.id), {
+        paymentStatus: "Approved",
+        reviewedAt: serverTimestamp()
+      });
+      batch.update(doc(db, "bookings", selected.id), {
+        status: "Confirmed"
+      });
+      await wrapSync(batch.commit(), {
+        successMsg: "Payment approved successfully",
+        offlineMsg: "Approval queued for sync",
+        silent: true // handle toast manually
+      });
+
+      setActing("payment_approve_sms");
+      const smsMsg = "RANAW PICKLEBALL COURT: Your booking has been APPROVED. Please arrive on your scheduled time. Thank you for choosing RANAW PICKLEBALL COURT.";
+      const phone = await resolveBookingContactNumber(db, selected);
+      const smsRes = await sendBookingSMS(selected.id, phone, smsMsg);
+      
+      if (smsRes.success) {
+        toast.success("Booking approved and SMS sent successfully");
+      } else {
+        if (smsRes.code === "no_number") {
+          toast.success("Booking updated but SMS could not be sent (missing contact number)");
+        } else if (smsRes.code === "invalid_format") {
+          toast.success("Booking updated but SMS failed due to invalid phone number");
+        } else if (smsRes.code === "config_error") {
+          toast.error(smsRes.error || "SMS sender ID not configured (M360_SHORTCODE_MASK in .env)");
+        } else {
+          toast.error(smsRes.error || "Booking updated but SMS service failed");
+        }
+      }
+    } catch (e) {
+      console.error(e);
+      toast.error("Update failed. Please try again.");
+    } finally {
+      setActing(null);
+    }
+  }
+
+  async function rejectPayment() {
+    if (!linkedPayment || !rejectReasonModal.reason.trim()) {
+      toast.error("Please enter a rejection reason");
+      return;
+    }
+    setActing("payment_reject");
+    try {
+      const batch = writeBatch(db);
+      batch.update(doc(db, "payments", linkedPayment.id), {
+        paymentStatus: "Rejected",
+        rejectionReason: rejectReasonModal.reason.trim(),
+        reviewedAt: serverTimestamp()
+      });
+      batch.update(doc(db, "bookings", selected.id), {
+        status: "Rejected"
+      });
+      await wrapSync(batch.commit(), {
+        successMsg: "Payment rejected",
+        offlineMsg: "Rejection queued for sync",
+        silent: true // handle toast manually
+      });
+      setRejectReasonModal({ open: false, reason: "" });
+
+      setActing("payment_reject_sms");
+      const smsMsg = "RANAW PICKLEBALL COURT: Your booking has been REJECTED. Please review your booking details or contact support for assistance. Thank you.";
+      const phone = await resolveBookingContactNumber(db, selected);
+      const smsRes = await sendBookingSMS(selected.id, phone, smsMsg);
+      
+      if (smsRes.success) {
+        toast.success("Booking rejected and SMS notification sent");
+      } else {
+        if (smsRes.code === "no_number") {
+          toast.success("Booking updated but SMS could not be sent (missing contact number)");
+        } else if (smsRes.code === "invalid_format") {
+          toast.success("Booking updated but SMS failed due to invalid phone number");
+        } else if (smsRes.code === "config_error") {
+          toast.error(smsRes.error || "SMS sender ID not configured (M360_SHORTCODE_MASK in .env)");
+        } else {
+          toast.error(smsRes.error || "Booking updated but SMS service failed");
+        }
+      }
+    } catch (e) {
+      console.error(e);
+      toast.error("Update failed. Please try again.");
+    } finally {
+      setActing(null);
+    }
+  }
+
+  async function setPaymentPending() {
+    if (!linkedPayment) return;
+    setActing("payment_pending");
+    try {
+      const batch = writeBatch(db);
+      batch.update(doc(db, "payments", linkedPayment.id), {
+        paymentStatus: "Pending"
+      });
+      batch.update(doc(db, "bookings", selected.id), {
+        status: "Pending Review"
+      });
+      await wrapSync(batch.commit(), {
+        successMsg: "Marked as pending review",
+        offlineMsg: "Update queued for sync"
+      });
+    } catch (e) {
+      console.error(e);
+      toast.error("Update failed. Please try again.");
+    } finally {
+      setActing(null);
+    }
+  }
+
   let rangeFrom = dateFrom.trim();
   let rangeTo = dateTo.trim();
   if (rangeFrom && rangeTo && rangeFrom > rangeTo) {
@@ -473,8 +661,15 @@ export default function BookingManager() {
   });
 
   const sorted = [...filtered].sort((a, b) => {
-    const diff = toDateMs(a) - toDateMs(b);
-    return sortByDate === "date_asc" ? diff : -diff;
+    if (sortByDate.startsWith("created")) {
+      const aTime = a.createdAt?.toMillis?.() || 0;
+      const bTime = b.createdAt?.toMillis?.() || 0;
+      const diff = aTime - bTime;
+      return sortByDate === "created_asc" ? diff : -diff;
+    } else {
+      const diff = toDateMs(a) - toDateMs(b);
+      return sortByDate === "date_asc" ? diff : -diff;
+    }
   });
   const totalPages = Math.max(1, Math.ceil(sorted.length / PAGE_SIZE));
   const currentPage = Math.min(page, totalPages);
@@ -551,8 +746,10 @@ export default function BookingManager() {
               onChange={(e) => setSortByDate(e.target.value)}
               aria-label="Sort order by booking date"
             >
-              <option value="date_desc">Newest → oldest</option>
-              <option value="date_asc">Oldest → newest</option>
+              <option value="created_desc">Received (Newest first)</option>
+              <option value="created_asc">Received (Oldest first)</option>
+              <option value="date_asc">Play Date (Soonest first)</option>
+              <option value="date_desc">Play Date (Furthest first)</option>
             </select>
           </div>
           <div className="ad-date-presets">
@@ -662,107 +859,233 @@ export default function BookingManager() {
       {/* Detail modal */}
       {selected && (
         <div className="ad-modal-backdrop" onClick={()=>setSelected(null)}>
-          <div className="ad-modal ad-modal-booking" onClick={e=>e.stopPropagation()}>
-            <div className="ad-modal-header">
-              <h3>Booking Detail</h3>
-              <button className="ad-modal-close" onClick={()=>setSelected(null)}>✕</button>
-            </div>
-            <div className="ad-detail-grid">
-              <div className="ad-detail-row"><span>Player</span><strong>{selected.playerName??selected.userId??'—'}</strong></div>
-              <div className="ad-detail-row"><span>Contact</span><strong>{selected.contactNumber ?? "—"}</strong></div>
-              <div className="ad-detail-row"><span>Court</span><strong>{selected.courtName??selected.courtId??'—'}</strong></div>
-              <div className="ad-detail-row"><span>Date</span><strong>{selected.date??'—'}</strong></div>
-              <div className="ad-detail-row"><span>Time Slot</span><strong>{selected.timeSlot??'—'}</strong></div>
-              <div className="ad-detail-row"><span>Duration</span><strong>{selected.duration ?? "—"} hr</strong></div>
-              <div className="ad-detail-row"><span>Total</span><strong>₱{roundMoney(Number(selected.totalAmount)||0).toFixed(2)}</strong></div>
-              <div className="ad-detail-row"><span>Paid</span><strong>₱{roundMoney(Number(selected.amountPaid)||0).toFixed(2)}</strong></div>
-              <div className="ad-detail-row"><span>Balance</span><strong>₱{deriveRemainingBalance(selected).toFixed(2)}</strong></div>
-              <div className="ad-detail-row">
-                <span>Pay status</span>
-                <div className="ad-action-btns">
-                  <select
-                    className="ad-search text-sm py-2"
-                    style={{ maxWidth: 170 }}
-                    value={payStatusDraft}
-                    onChange={(e) => setPayStatusDraft(e.target.value)}
-                  >
-                    <option value="partial">Partial</option>
-                    <option value="paid">Full</option>
-                    <option value="unpaid">Unpaid</option>
-                  </select>
-                  <button
-                    type="button"
-                    className="ad-btn ad-btn-sm ad-btn-primary"
-                    disabled={acting===selected.id || payStatusDraft === String(selected.customerPaymentStatus || "").toLowerCase()}
-                    onClick={() => updatePayStatus(selected, payStatusDraft)}
-                  >
-                    Save
-                  </button>
-                </div>
+          <div className="ad-modal ad-modal-booking flex flex-col md:flex-row bg-[#0f172a]/95 backdrop-blur-xl border border-slate-700 shadow-2xl rounded-2xl overflow-hidden" style={{ maxWidth: '1200px', width: '96vw' }} onClick={e=>e.stopPropagation()}>
+            {/* LEFT COLUMN: INFO */}
+            <div className="flex-1 flex flex-col max-h-[85vh] overflow-y-auto custom-scrollbar border-r border-slate-800">
+              <div className="ad-modal-header sticky top-0 bg-[#0f172a]/95 backdrop-blur-md z-10 border-b border-slate-800">
+                <h3>Booking & Payment Details</h3>
+                <button className="ad-modal-close lg:hidden" onClick={()=>setSelected(null)}>✕</button>
               </div>
-              <div className="ad-detail-row"><span>Booking status</span>
-                <span className={`ad-badge ad-badge-${STATUS_COLORS[selected.status]??"pending"}`}>{selected.status??"Pending"}</span>
-              </div>
-              {selected.notes && <div className="ad-detail-row ad-detail-full"><span>Notes</span><strong>{selected.notes}</strong></div>}
-            </div>
-            {selected.status !== "Cancelled" && (
-              <div className="px-6 py-3 border-t border-slate-800 bg-slate-900/30">
-                <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Extend time</p>
-                <div className="flex flex-wrap items-end gap-2">
-                  <div>
-                    <label className="text-[10px] text-slate-500 block mb-1">Add hours</label>
-                    <select
-                      className="ad-search text-sm py-2"
-                      value={extendHours}
-                      onChange={(e) => setExtendHours(Number(e.target.value))}
-                    >
-                      {EXTEND_OPTIONS.map((h) => (
-                        <option key={h} value={h}>+{h} hr</option>
-                      ))}
-                    </select>
+              <div className="p-4 space-y-6">
+                {/* Booking Info */}
+                <div>
+                  <h4 className="text-xs font-bold text-cyan-400 uppercase tracking-wider mb-3">Booking Information</h4>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="ad-detail-row"><span>Player</span><strong>{selected.playerName??selected.userId??'—'}</strong></div>
+                    <div className="ad-detail-row"><span>Contact</span><strong>{resolvedContact ?? selected.contactNumber ?? "—"}</strong></div>
+                    <div className="ad-detail-row"><span>Court</span><strong>{selected.courtName??selected.courtId??'—'}</strong></div>
+                    <div className="ad-detail-row"><span>Date</span><strong>{selected.date??'—'}</strong></div>
+                    <div className="ad-detail-row"><span>Time Slot</span><strong>{selected.timeSlot??'—'}</strong></div>
+                    <div className="ad-detail-row"><span>Duration</span><strong>{selected.duration ?? "—"} hr</strong></div>
+                    <div className="ad-detail-row"><span>Total</span><strong>₱{roundMoney(Number(selected.totalAmount)||0).toFixed(2)}</strong></div>
+                    <div className="ad-detail-row"><span>Paid</span><strong>₱{roundMoney(Number(selected.amountPaid)||0).toFixed(2)}</strong></div>
+                    <div className="ad-detail-row"><span>Balance</span><strong>₱{deriveRemainingBalance(selected).toFixed(2)}</strong></div>
+                    <div className="ad-detail-row"><span>Booking Status</span>
+                      <span className={`ad-badge ad-badge-${STATUS_COLORS[selected.status]??"pending"} mt-1 w-fit`}>{selected.status??"Pending"}</span>
+                    </div>
                   </div>
+                </div>
+
+                {/* Payment Info */}
+                {linkedPayment && (
+                  <div>
+                    <h4 className="text-xs font-bold text-cyan-400 uppercase tracking-wider mb-3">Payment Record</h4>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="ad-detail-row"><span>Amount</span><strong>₱{roundMoney(Number(linkedPayment.amount)||0).toFixed(2)}</strong></div>
+                      <div className="ad-detail-row"><span>Discount</span><strong>₱{roundMoney(Number(linkedPayment.discount)||0).toFixed(2)}</strong></div>
+                      <div className="ad-detail-row"><span>Promo Code</span><strong>{linkedPayment.promoCode ?? "None"}</strong></div>
+                      <div className="ad-detail-row"><span>Method</span><strong className="capitalize">{linkedPayment.method ?? "—"}</strong></div>
+                      <div className="ad-detail-row"><span>Status</span>
+                        <span className={`ad-badge ad-badge-${PAY_STATUS_BADGE[(linkedPayment.paymentStatus||"").toLowerCase()]??"pending"} mt-1 w-fit`}>
+                          {linkedPayment.paymentStatus ?? "Pending"}
+                        </span>
+                      </div>
+                      <div className="ad-detail-row"><span>Created At</span><strong>{linkedPayment.createdAt?.toDate ? format(linkedPayment.createdAt.toDate(), "MMM dd, yyyy — h:mm a") : "—"}</strong></div>
+                      <div className="ad-detail-row"><span>Reviewed At</span><strong>{linkedPayment.reviewedAt?.toDate ? format(linkedPayment.reviewedAt.toDate(), "MMM dd, yyyy — h:mm a") : "Not reviewed"}</strong></div>
+                    </div>
+                  </div>
+                )}
+                
+                {!linkedPayment && (
+                  <div className="p-4 rounded-xl border border-slate-800 bg-slate-900/50 flex items-center justify-center text-sm text-slate-500 font-medium">
+                    No linked payment record found for this booking.
+                  </div>
+                )}
+
+                {/* Extend Time */}
+                {selected.status !== "Cancelled" && (
+                  <div className="p-4 rounded-xl border border-slate-800 bg-slate-900/30">
+                    <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3">Extend time</p>
+                    <div className="flex flex-wrap items-end gap-3">
+                      <div>
+                        <label className="text-[10px] text-slate-500 block mb-1">Add hours</label>
+                        <select
+                          className="ad-search text-sm py-2"
+                          value={extendHours}
+                          onChange={(e) => setExtendHours(Number(e.target.value))}
+                        >
+                          {EXTEND_OPTIONS.map((h) => (
+                            <option key={h} value={h}>+{h} hr</option>
+                          ))}
+                        </select>
+                      </div>
+                      <button
+                        type="button"
+                        className="ad-btn ad-btn-sm ad-btn-success"
+                        disabled={extending}
+                        onClick={() => applyExtension(selected)}
+                      >
+                        {extending ? "…" : "Extend"}
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+              
+              <div className="mt-auto p-4 border-t border-slate-800 bg-[#0f172a]/95 sticky bottom-0 z-10 flex flex-wrap gap-2 items-center justify-between">
+                <button
+                  type="button"
+                  className="ad-btn ad-btn-outline ad-btn-sm"
+                  disabled={acting===selected.id}
+                  onClick={() => removeBooking(selected.id)}
+                >
+                  Delete Booking
+                </button>
+                <div className="flex gap-2">
                   <button
                     type="button"
-                    className="ad-btn ad-btn-sm ad-btn-success"
-                    disabled={extending}
-                    onClick={() => applyExtension(selected)}
+                    className="ad-btn ad-btn-primary ad-btn-sm"
+                    disabled={acting===selected.id}
+                    onClick={() => handlePrintReceipt(selected)}
                   >
-                    {extending ? "…" : "Extend"}
+                    Print Receipt
                   </button>
+                  {deriveRemainingBalance(selected) > 0 && selected.status !== "Cancelled" && (
+                    <button
+                      className="ad-btn ad-btn-sm ad-btn-success"
+                      disabled={acting===selected.id}
+                      onClick={() => openBalanceModal(selected)}
+                    >
+                      + Pay balance
+                    </button>
+                  )}
                 </div>
               </div>
-            )}
-            <div className="ad-modal-footer ad-modal-footer-between">
-              <button
-                type="button"
-                className="ad-btn ad-btn-outline"
-                disabled={acting===selected.id}
-                onClick={() => removeBooking(selected.id)}
-              >
-                Delete booking
-              </button>
-              <div className="ad-modal-footer-actions">
-                {deriveRemainingBalance(selected) > 0 && selected.status !== "Cancelled" && (
-                  <button
-                    className="ad-btn ad-btn-sm ad-btn-success"
-                    disabled={acting===selected.id}
-                    onClick={() => openBalanceModal(selected)}
-                    title="Record an on-site payment for remaining balance"
+            </div>
+
+            {/* RIGHT COLUMN: PAYMENT PREVIEW & ACTIONS */}
+            <div className="md:w-[420px] lg:w-[500px] flex-shrink-0 flex flex-col bg-slate-900/50 relative max-h-[85vh]">
+              <div className="absolute top-4 right-4 z-20 hidden lg:block">
+                <button className="w-8 h-8 rounded-full bg-slate-800/80 text-slate-400 hover:text-white hover:bg-slate-700 flex items-center justify-center transition-colors shadow-lg" onClick={()=>setSelected(null)}>✕</button>
+              </div>
+              
+              <div className="flex-1 overflow-y-auto custom-scrollbar p-6 flex flex-col">
+                <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-4">Payment Proof Preview</h4>
+                
+                {linkedPayment?.paymentImageUrl ? (
+                  <div 
+                    className="relative rounded-xl overflow-hidden border border-slate-700 bg-black/50 shadow-2xl cursor-pointer group flex-1 min-h-[300px]"
+                    onClick={() => setZoomImage(linkedPayment.paymentImageUrl)}
                   >
-                    + Pay balance
-                  </button>
+                    <img 
+                      src={linkedPayment.paymentImageUrl} 
+                      alt="Payment Proof" 
+                      className="w-full h-full object-contain transition-transform duration-500 group-hover:scale-105"
+                    />
+                    <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center backdrop-blur-sm">
+                      <div className="flex flex-col items-center gap-2 text-white">
+                        <span className="material-symbols-outlined text-4xl">zoom_in</span>
+                        <span className="text-sm font-semibold tracking-wide">Click to Zoom</span>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex-1 min-h-[300px] rounded-xl border border-dashed border-slate-700 bg-slate-800/30 flex flex-col items-center justify-center text-slate-500 gap-3">
+                    <span className="material-symbols-outlined text-4xl opacity-50">receipt_long</span>
+                    <p className="text-sm font-medium">No payment proof uploaded</p>
+                  </div>
                 )}
-                {selected.status!=="Approved" && (
-                  <button className="ad-btn ad-btn-success" disabled={acting===selected.id} onClick={()=>setStatus(selected.id,"Approved")}>✓ Approve</button>
+
+                {/* Reject Reason Input (conditionally visible) */}
+                {rejectReasonModal.open && (
+                  <div className="mt-4 p-4 rounded-xl bg-red-500/10 border border-red-500/20 shadow-inner">
+                    <label className="text-[11px] font-bold text-red-400 uppercase tracking-wide block mb-2">Rejection Reason</label>
+                    <textarea 
+                      className="w-full bg-slate-900/80 border border-red-500/30 rounded-lg p-3 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-red-500 focus:ring-1 focus:ring-red-500 resize-none"
+                      rows="2"
+                      placeholder="Why is this payment being rejected?"
+                      value={rejectReasonModal.reason}
+                      onChange={(e) => setRejectReasonModal(prev => ({...prev, reason: e.target.value}))}
+                    ></textarea>
+                    <div className="flex gap-2 mt-3 justify-end">
+                      <button className="text-xs font-semibold text-slate-400 hover:text-white px-3 py-1.5" onClick={() => setRejectReasonModal({open:false, reason:""})}>Cancel</button>
+                      <button className="text-xs font-bold bg-red-500 text-white px-4 py-1.5 rounded-md hover:bg-red-600 transition-colors shadow-lg shadow-red-500/20" onClick={rejectPayment} disabled={acting === "payment_reject" || acting === "payment_reject_sms"}>
+                        {acting === "payment_reject" ? "Rejecting..." : acting === "payment_reject_sms" ? "Sending SMS..." : "Confirm Reject"}
+                      </button>
+                    </div>
+                  </div>
                 )}
-                {selected.status!=="Cancelled" && (
-                  <button className="ad-btn ad-btn-danger" disabled={acting===selected.id} onClick={()=>setStatus(selected.id,"Cancelled")}>✕ Cancel</button>
+              </div>
+
+              {/* Action Buttons Footer */}
+              <div className="p-4 border-t border-slate-800 bg-slate-900/80 backdrop-blur-md sticky bottom-0 z-10 flex flex-col gap-2">
+                {!rejectReasonModal.open && (
+                  <div className="flex gap-2 w-full">
+                    <button 
+                      className="flex-1 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold py-2.5 px-4 rounded-lg transition-all shadow-lg shadow-emerald-500/20 disabled:opacity-50"
+                      onClick={approvePayment}
+                      disabled={!linkedPayment || acting || linkedPayment.paymentStatus === "Approved"}
+                    >
+                      {acting === "payment_approve" ? "Approving..." : acting === "payment_approve_sms" ? "Sending SMS..." : "Approve Payment"}
+                    </button>
+                    <button 
+                      className="flex-1 bg-red-500/10 border border-red-500/30 hover:bg-red-500 hover:text-white text-red-400 font-bold py-2.5 px-4 rounded-lg transition-all disabled:opacity-50"
+                      onClick={() => setRejectReasonModal({ open: true, reason: "" })}
+                      disabled={!linkedPayment || acting || linkedPayment.paymentStatus === "Rejected"}
+                    >
+                      Reject
+                    </button>
+                  </div>
                 )}
+                <button 
+                  className="w-full bg-transparent border border-amber-500/30 text-amber-400 hover:bg-amber-500/10 font-semibold py-2 px-4 rounded-lg transition-colors text-sm disabled:opacity-50"
+                  onClick={setPaymentPending}
+                  disabled={!linkedPayment || acting || linkedPayment.paymentStatus === "Pending"}
+                >
+                  {acting === "payment_pending" ? "Setting..." : "Set as Pending Review"}
+                </button>
               </div>
             </div>
           </div>
         </div>
       )}
+
+      {/* Zoom Image Modal */}
+      {zoomImage && (
+        <div className="fixed inset-0 z-[300] bg-black/90 flex items-center justify-center backdrop-blur-sm p-4 lg:p-8" onClick={() => setZoomImage(null)}>
+          <button className="absolute top-6 right-6 w-10 h-10 rounded-full bg-white/10 text-white hover:bg-white/20 flex items-center justify-center transition-colors backdrop-blur-md" onClick={() => setZoomImage(null)}>
+            <span className="material-symbols-outlined">close</span>
+          </button>
+          <img 
+            src={zoomImage} 
+            alt="Fullscreen Payment Proof" 
+            className="max-w-full max-h-full object-contain rounded-lg shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          />
+          <a 
+            href={zoomImage} 
+            download="payment-proof.jpg" 
+            target="_blank" 
+            rel="noopener noreferrer"
+            className="absolute bottom-6 right-6 flex items-center gap-2 bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold py-2.5 px-5 rounded-full transition-all shadow-lg shadow-cyan-500/20"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <span className="material-symbols-outlined text-[20px]">download</span>
+            Download
+          </a>
+        </div>
+      )}
+      
       {balanceModal.open && balanceModal.booking && (
         <div className="ad-modal-backdrop" onClick={closeBalanceModal}>
           <div className="ad-modal ad-modal-balance" onClick={(e) => e.stopPropagation()}>
@@ -838,6 +1161,15 @@ export default function BookingManager() {
             </div>
           </div>
         </div>
+      )}
+
+      {printData && (
+        <ReceiptPrint 
+          booking={printData.booking} 
+          receiptId={printData.receiptId} 
+          printedBy={printData.printedBy}
+          onAfterPrint={() => setPrintData(null)}
+        />
       )}
     </div>
   );

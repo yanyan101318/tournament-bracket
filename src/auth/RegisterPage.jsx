@@ -28,6 +28,7 @@ export default function RegisterPage() {
   const navigate = useNavigate();
 
   useEffect(() => {
+    document.title = "RANAW PICKLEBALL COURT | Register";
     if (!isRegisterAccessGranted()) {
       navigate("/login", { replace: true });
     }
@@ -96,8 +97,8 @@ export default function RegisterPage() {
         <div className="auth-left">
           <div className="auth-brand">
             <div className="auth-brand-icon">🏓</div>
-            <h1 className="auth-brand-name">PicklePro</h1>
-            <p className="auth-brand-tagline">Facility Management System</p>
+            <h1 className="auth-brand-name">RANAW PICKLEBALL COURT</h1>
+            <p className="auth-brand-tagline">Court Reservation Management</p>
           </div>
           <div className="auth-left-features">
             <div className="alf-item">
@@ -144,8 +145,8 @@ export default function RegisterPage() {
       <div className="auth-left">
         <div className="auth-brand">
           <div className="auth-brand-icon">🏓</div>
-          <h1 className="auth-brand-name">PicklePro</h1>
-          <p className="auth-brand-tagline">Facility Management System</p>
+          <h1 className="auth-brand-name">RANAW PICKLEBALL COURT</h1>
+          <p className="auth-brand-tagline">Court Reservation Management</p>
         </div>
         <div className="auth-left-features">
           <div className="alf-item">
@@ -170,7 +171,7 @@ export default function RegisterPage() {
       <div className="auth-right">
         <div className="auth-card">
           <div className="auth-card-header">
-            <h2 className="auth-card-title">Create administrator account</h2>
+            <h2 className="auth-card-title">Create your RANAW PICKLEBALL COURT account</h2>
             <p className="auth-card-sub">
               New accounts are administrators. You must verify your email before signing in.
             </p>

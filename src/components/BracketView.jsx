@@ -4,6 +4,7 @@ import MatchCard from "./MatchCard";
 import ScoreModal from "./ScoreModal";
 import { getShareOrigin } from "../utils/shareUrl";
 import { copyText } from "../utils/clipboard";
+import { QRCodeSVG } from "qrcode.react";
 
 const ROUND_LABELS = ["Round 1", "Quarterfinals", "Semifinals", "Final", "Grand Final"];
 
@@ -46,6 +47,8 @@ export default function BracketView({
   const [activeMatch, setActiveMatch] = useState(null);
   const [showConfirm, setShowConfirm]  = useState(false);
   const [copiedId, setCopiedId]        = useState(null);
+  const [qrModalMatchId, setQrModalMatchId] = useState(null);
+  const [isGeneratingQr, setIsGeneratingQr] = useState(false);
   const champion = rounds[rounds.length - 1]?.[0]?.winner;
 
   function getRoundLabel(i, total) {
@@ -79,8 +82,73 @@ export default function BracketView({
     setTimeout(() => setCopiedId(null), 2000);
   }
 
+  async function openLedFocus(matchId) {
+    if (!tournamentId || !matchId) return;
+    const shareOrigin = await getShareOrigin();
+    window.open(`${shareOrigin}/bracket/${tournamentId}?focus=${matchId}`, "_blank", "noopener,noreferrer");
+  }
+
+  async function handleShowQr(match) {
+    if (!match.pinCode) {
+      setIsGeneratingQr(true);
+      const newPin = Math.floor(100000 + Math.random() * 900000).toString();
+      try {
+        await onPersistMatch({
+          ...match,
+          pinCode: newPin,
+          pinStatus: "active"
+        });
+      } catch (err) {
+        console.error("Failed to generate PIN", err);
+      }
+      setIsGeneratingQr(false);
+    }
+    setQrModalMatchId(match.matchId);
+  }
+
+  async function handleRegeneratePin(match) {
+    const newPin = Math.floor(100000 + Math.random() * 900000).toString();
+    try {
+      await onPersistMatch({
+        ...match,
+        pinCode: newPin,
+        pinStatus: "active"
+      });
+    } catch (err) {
+      console.error("Failed to regenerate PIN", err);
+    }
+  }
+
+  async function handleCopyPin(pinCode) {
+    await copyText(pinCode);
+    setCopiedId("pin");
+    setTimeout(() => setCopiedId(null), 2000);
+  }
+
+  function handleDownloadQr(matchId) {
+    const canvas = document.getElementById("qr-canvas-" + matchId);
+    if (!canvas) {
+      // It's an SVG, so we need to convert it to download.
+      // Easiest is to create a blob from the SVG string
+      const svg = document.getElementById("qr-svg-" + matchId);
+      if (!svg) return;
+      const svgData = new XMLSerializer().serializeToString(svg);
+      const blob = new Blob([svgData], { type: "image/svg+xml;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `scorer-qr-${matchId}.svg`;
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+  }
+
   const latestActive = activeMatch
     ? rounds.flat().find(m => m.matchId === activeMatch.matchId) ?? null
+    : null;
+
+  const qrMatch = qrModalMatchId
+    ? rounds.flat().find(m => m.matchId === qrModalMatchId) ?? null
     : null;
 
   return (
@@ -228,11 +296,33 @@ export default function BracketView({
                   <div key={match.matchId} className="match-with-link">
                     <MatchCard match={match} onClick={setActiveMatch}/>
                     {tournamentId && match.teamA && match.teamB && match.teamB !== "BYE" && (
-                      <button
-                        className={`scorer-link-btn ${copiedId === match.matchId ? "copied" : ""}`}
-                        onClick={() => copyScorerLink(match.matchId)}>
-                        {copiedId === match.matchId ? "✓ Copied!" : "🔗 Copy Scorer Link"}
-                      </button>
+                      <div className="bracket-card-actions" style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem' }}>
+                        <button
+                          className={`scorer-link-btn ${copiedId === match.matchId ? "copied" : ""}`}
+                          onClick={() => copyScorerLink(match.matchId)}
+                          style={{ flex: 1 }}>
+                          {copiedId === match.matchId ? "✓ Copied!" : "🔗 Copy Link"}
+                        </button>
+                        <button
+                          className="qr-pin-btn"
+                          onClick={() => handleShowQr(match)}
+                          style={{
+                            flex: 1, padding: "0.4rem", fontSize: "0.75rem", borderRadius: "6px",
+                            background: "rgba(200, 230, 58, 0.15)", color: "var(--pickle)", border: "1px solid var(--pickle)", cursor: "pointer",
+                            fontWeight: "bold",
+                            transition: "all 0.2s"
+                          }}>
+                          QR & PIN
+                        </button>
+                        <button
+                          type="button"
+                          className="scorer-link-btn"
+                          onClick={() => openLedFocus(match.matchId)}
+                          style={{ flex: 1 }}
+                          title="Open zoomed view on LED wall">
+                          📺 LED Zoom
+                        </button>
+                      </div>
                     )}
                   </div>
                 ))}
@@ -252,6 +342,74 @@ export default function BracketView({
           onPersistMatch={onPersistMatch}
           onClose={() => setActiveMatch(null)}
         />
+      )}
+
+      {/* ── QR & PIN MODAL ── */}
+      {qrMatch && (
+        <div className="confirm-backdrop" onClick={() => setQrModalMatchId(null)}>
+          <div className="confirm-box" style={{ maxWidth: '400px', padding: '2rem' }} onClick={e => e.stopPropagation()}>
+            <div className="qr-modal-header" style={{ marginBottom: '1.5rem', textAlign: 'center' }}>
+              <h2 style={{ margin: 0, color: 'var(--text)', fontSize: '1.4rem' }}>Secure Scorer Access</h2>
+              <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem', margin: '0.5rem 0 0 0' }}>Scan to score match: {qrMatch.teamA} vs {qrMatch.teamB}</p>
+            </div>
+            
+            {isGeneratingQr ? (
+              <div style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-muted)' }}>Generating secure PIN...</div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '1.5rem' }}>
+                <div style={{ background: '#fff', padding: '1rem', borderRadius: '8px' }}>
+                  <QRCodeSVG 
+                    id={"qr-svg-" + qrMatch.matchId}
+                    value={`${window.location.origin}/score/${tournamentId}/${qrMatch.matchId}`} 
+                    size={200}
+                    level={"H"}
+                  />
+                </div>
+                
+                <div style={{ width: '100%', background: 'rgba(0,0,0,0.2)', padding: '1rem', borderRadius: '8px', border: '1px solid var(--border)', textAlign: 'center' }}>
+                  <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '0.5rem' }}>One-Time PIN</div>
+                  <div style={{ fontSize: '2.5rem', fontWeight: 'bold', color: 'var(--pickle)', letterSpacing: '8px', fontFamily: 'monospace' }}>
+                    {qrMatch.pinCode}
+                  </div>
+                  <div style={{ marginTop: '0.5rem', display: 'flex', justifyContent: 'center', gap: '1rem' }}>
+                    <span style={{ 
+                      fontSize: '0.75rem', 
+                      padding: '2px 8px', 
+                      borderRadius: '12px',
+                      background: qrMatch.pinStatus === 'used' ? 'rgba(234,179,8,0.2)' : qrMatch.pinStatus === 'expired' || qrMatch.winner ? 'rgba(239,68,68,0.2)' : 'rgba(34,197,94,0.2)',
+                      color: qrMatch.pinStatus === 'used' ? '#eab308' : qrMatch.pinStatus === 'expired' || qrMatch.winner ? '#ef4444' : '#22c55e',
+                      textTransform: 'uppercase',
+                      fontWeight: 'bold'
+                    }}>
+                      {qrMatch.winner ? 'EXPIRED (MATCH OVER)' : (qrMatch.pinStatus || 'ACTIVE')}
+                    </span>
+                  </div>
+                </div>
+
+                <div style={{ display: 'flex', gap: '1rem', width: '100%' }}>
+                  <button 
+                    onClick={() => handleCopyPin(qrMatch.pinCode)}
+                    style={{ flex: 1, padding: '0.8rem', borderRadius: '8px', background: 'var(--surface2)', border: '1px solid var(--border)', color: 'var(--text)', cursor: 'pointer', fontWeight: 'bold' }}>
+                    {copiedId === "pin" ? "✓ Copied!" : "Copy PIN"}
+                  </button>
+                  <button 
+                    onClick={() => handleDownloadQr(qrMatch.matchId)}
+                    style={{ flex: 1, padding: '0.8rem', borderRadius: '8px', background: 'var(--pickle)', border: 'none', color: '#000', cursor: 'pointer', fontWeight: 'bold' }}>
+                    Download QR
+                  </button>
+                </div>
+                
+                <button 
+                  onClick={() => handleRegeneratePin(qrMatch)}
+                  style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', textDecoration: 'underline', cursor: 'pointer', fontSize: '0.8rem' }}>
+                  Regenerate PIN (Revokes previous access)
+                </button>
+              </div>
+            )}
+            
+            <button className="confirm-cancel" style={{ width: '100%', marginTop: '1.5rem' }} onClick={() => setQrModalMatchId(null)}>Close</button>
+          </div>
+        </div>
       )}
 
       {/* ── CONFIRM RESET ── */}

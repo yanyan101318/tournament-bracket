@@ -89,7 +89,7 @@ export default function AdminSchedule() {
         sort: `${b.timeSlot || "00:00"}-${b.id}`,
         label: "Court booking",
         title: `${b.playerName || "Guest"} · ${b.courtName || b.courtId || "Court"}`,
-        sub: [b.timeSlot, b.status, b.hasPendingWrites ? "Pending Sync" : null].filter(Boolean).join(" · "),
+        sub: [`${b.timeSlot || ""}${b.duration ? ` (${b.duration} hr${b.duration > 1 ? 's' : ''})` : ""}`, b.status, b.hasPendingWrites ? "Pending Sync" : null].filter(Boolean).join(" · "),
         id: b.id,
       });
     }

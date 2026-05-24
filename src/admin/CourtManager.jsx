@@ -8,6 +8,7 @@ import {
 import { db } from "../firebase";
 import { useOfflineSync } from "../hooks/useOfflineSync";
 import toast from "react-hot-toast";
+import { QRCodeCanvas } from "qrcode.react";
 
 const BLANK = { name:"", description:"", pricePerHour:"", amenities:"", isActive:true };
 
@@ -16,8 +17,13 @@ export default function CourtManager() {
   const [form, setForm]       = useState(BLANK);
   const [editId, setEditId]   = useState(null);
   const [showForm, setShowForm] = useState(false);
+  const [qrCourt, setQrCourt]   = useState(null);
   const [search, setSearch]   = useState("");
   const { syncState, wrapSync } = useOfflineSync();
+
+  useEffect(() => {
+    document.title = "RANAW PICKLEBALL COURT | Court Management";
+  }, []);
 
   useEffect(() => {
     const q = query(collection(db,"courts"), orderBy("createdAt","desc"));
@@ -157,6 +163,7 @@ export default function CourtManager() {
                 </Link>
               )}
               <button className="ad-btn ad-btn-sm ad-btn-outline" onClick={()=>openEdit(court)} disabled={syncState !== 'idle' && syncState !== 'error'}> Edit</button>
+              <button className="ad-btn ad-btn-sm ad-btn-outline" onClick={()=>setQrCourt(court)}>QR</button>
               <button className="ad-btn ad-btn-sm ad-btn-outline" onClick={()=>toggleActive(court)} disabled={syncState !== 'idle' && syncState !== 'error'}>
                 {court.isActive ? " Deactivate" : " Activate"}
               </button>
@@ -209,6 +216,66 @@ export default function CourtManager() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* QR Modal */}
+      {qrCourt && (
+        <div className="ad-modal-backdrop" onClick={(e) => e.target === e.currentTarget && setQrCourt(null)}>
+          <style>{`
+            @media print {
+              body * { visibility: hidden; }
+              #print-section, #print-section * { visibility: visible; }
+              #print-section {
+                position: absolute;
+                left: 0;
+                top: 0;
+                width: 100%;
+                display: flex !important;
+                flex-direction: column;
+                align-items: center;
+                justify-content: flex-start;
+                padding-top: 4rem;
+                background: white;
+              }
+              .print-text {
+                display: block !important;
+                color: black;
+                text-align: center;
+              }
+              .print-title { font-size: 3rem; font-weight: bold; margin-bottom: 2rem; }
+              .print-subtitle { font-size: 2rem; font-weight: 600; margin-top: 2rem; }
+            }
+          `}</style>
+          <div className="ad-modal flex flex-col items-center">
+            <div className="ad-modal-header w-full">
+              <h3>{qrCourt.name} QR Code</h3>
+              <button className="ad-modal-close" onClick={() => setQrCourt(null)}>✕</button>
+            </div>
+            <div id="print-section" className="p-8 bg-white rounded-xl my-4 flex flex-col items-center">
+              <div className="print-text print-title hidden">{qrCourt.name}</div>
+              <QRCodeCanvas id="court-qr-canvas" value={`${window.location.origin}/order?courtId=${qrCourt.id}`} size={256} />
+              <div className="print-text print-subtitle hidden">Scan to Order</div>
+            </div>
+            <p className="text-sm text-slate-400 text-center px-4 mb-4">
+              Print this QR code and place it at {qrCourt.name}.<br/>
+              Players can scan it to order food and drinks during their booked time.
+            </p>
+            <div className="ad-modal-footer w-full flex justify-center">
+              <button className="ad-btn ad-btn-primary" onClick={() => {
+                const canvas = document.getElementById("court-qr-canvas");
+                if (canvas) {
+                  const dataUrl = canvas.toDataURL("image/png");
+                  wrapSync(updateDoc(doc(db, "courts", qrCourt.id), { qrCodeImage: dataUrl }), {
+                    successMsg: "QR code saved to database",
+                    offlineMsg: "Saved offline",
+                    errorMsg: "Failed to save QR code"
+                  });
+                }
+                setTimeout(() => window.print(), 100);
+              }}>Print & Save QR</button>
+            </div>
           </div>
         </div>
       )}

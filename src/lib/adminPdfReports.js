@@ -30,11 +30,11 @@ function drawBrandedHeader(doc, titleLine, subtitleLine) {
   doc.setTextColor(255, 255, 255);
   doc.setFont("helvetica", "bold");
   doc.setFontSize(14);
-  doc.text("PICKLEPRO", MARGIN, 14);
+  doc.text("RANAW PICKLEBALL", MARGIN, 14);
   doc.setFontSize(9);
   doc.setTextColor(148, 163, 184);
   doc.setFont("helvetica", "normal");
-  doc.text("Volt Facility", MARGIN + 38, 14);
+  doc.text("COURT", MARGIN + 58, 14);
   doc.setFont("helvetica", "bold");
   doc.setFontSize(11);
   doc.setTextColor(255, 255, 255);
@@ -51,7 +51,7 @@ function drawFooter(doc, pageIndex, totalPages) {
   doc.setFontSize(7.5);
   doc.setTextColor(100, 116, 139);
   doc.text(`Page ${pageIndex} / ${totalPages}`, MARGIN, y);
-  doc.text("PicklePro Volt Facility", PAGE_W - MARGIN, y, { align: "right" });
+  doc.text("RANAW PICKLEBALL COURT", PAGE_W - MARGIN, y, { align: "right" });
 }
 
 function finalizeDoc(doc, filenameBase) {
@@ -220,11 +220,11 @@ export function downloadPosReceiptPdf(detail, tsToDate) {
   doc.setTextColor(255, 255, 255);
   doc.setFont("helvetica", "bold");
   doc.setFontSize(9);
-  doc.text("PICKLEPRO", w / 2, 8, { align: "center" });
+  doc.text("RANAW PICKLEBALL COURT", w / 2, 8, { align: "center" });
   doc.setFontSize(7);
   doc.setFont("helvetica", "normal");
   doc.setTextColor(203, 213, 225);
-  doc.text("Volt Facility • Sales receipt", w / 2, 12, { align: "center" });
+  doc.text("Sales receipt", w / 2, 12, { align: "center" });
 
   y = 20;
   doc.setTextColor(15, 23, 42);

@@ -1,8 +1,7 @@
 // src/pages/ViewerPage.jsx
 import { useState, useEffect } from "react";
-import { useParams } from "react-router-dom";
+import { useParams, useSearchParams } from "react-router-dom";
 import { subscribeToMatches, subscribeToTournamentInfo } from "../services/tournamentService";
-import { setsNeeded } from "../utils/bracketGenerator";
 
 const ROUND_LABELS = ["Round 1","Quarterfinals","Semifinals","Final","Grand Final"];
 
@@ -51,12 +50,84 @@ function buildRounds(matchMap) {
   return rounds;
 }
 
+function matchDisplayPriority(m) {
+  if (m.winner) return 50;
+  const hasTeams = m.teamA && m.teamB && m.teamA !== "BYE" && m.teamB !== "BYE";
+  const isLive = (m.sets?.length > 0)
+    || m.scoreA > 0 || m.scoreB > 0
+    || (m.scoreA !== undefined && m.scoreA !== 0)
+    || (m.scoreB !== undefined && m.scoreB !== 0);
+  if (isLive) return 0;
+  if (hasTeams) return 10;
+  return 30;
+}
+
+function findMatchForCourtSlot(allMatches, courtNum, usedIds) {
+  const active = allMatches.find(m =>
+    !usedIds.has(m.matchId) && String(m.courtNumber) === String(courtNum) && !m.winner
+  );
+  if (active) return active;
+  return allMatches.find(m =>
+    !usedIds.has(m.matchId) && String(m.courtNumber) === String(courtNum)
+  ) || null;
+}
+
+/** Map grid slots 1–6 to matches: assigned courts first, then auto-fill playable matches */
+function buildCourtGrid(allMatches) {
+  const grid = {};
+  const usedIds = new Set();
+
+  for (let n = 1; n <= 6; n++) {
+    const assigned = findMatchForCourtSlot(allMatches, n, usedIds);
+    if (assigned) {
+      grid[n] = assigned;
+      usedIds.add(assigned.matchId);
+    }
+  }
+
+  const withOtherCourt = allMatches
+    .filter(m => m.courtNumber && !usedIds.has(m.matchId))
+    .sort((a, b) => matchDisplayPriority(a) - matchDisplayPriority(b));
+
+  for (const m of withOtherCourt) {
+    const freeSlot = [1, 2, 3, 4, 5, 6].find(n => !grid[n]);
+    if (!freeSlot) break;
+    grid[freeSlot] = m;
+    usedIds.add(m.matchId);
+  }
+
+  const pool = allMatches
+    .filter(m => !usedIds.has(m.matchId) && !m.courtNumber && !m.winner)
+    .sort((a, b) => matchDisplayPriority(a) - matchDisplayPriority(b));
+
+  for (let n = 1; n <= 6; n++) {
+    if (!grid[n] && pool.length) {
+      grid[n] = pool.shift();
+      usedIds.add(grid[n].matchId);
+    }
+  }
+
+  return grid;
+}
+
+function getCourtLabel(match, slotNum) {
+  if (match?.courtNumber) return String(match.courtNumber).toUpperCase();
+  return String(slotNum);
+}
+
 export default function ViewerPage() {
   const { tournamentId } = useParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [matchMap, setMatchMap] = useState({});
   const [info, setInfo]         = useState(null);
   const [loading, setLoading]   = useState(true);
   const [flashId, setFlashId]   = useState(null);
+  const [focusedMatchId, setFocusedMatchId] = useState(() => searchParams.get("focus") || null);
+
+  useEffect(() => {
+    const focus = searchParams.get("focus");
+    if (focus) setFocusedMatchId(focus);
+  }, [searchParams]);
 
   useEffect(() => {
     const unsubInfo    = subscribeToTournamentInfo(tournamentId, setInfo);
@@ -72,6 +143,16 @@ export default function ViewerPage() {
     });
     return ()=>{ unsubInfo(); unsubMatches(); };
   }, [tournamentId]);
+
+  function openFocus(matchId) {
+    setFocusedMatchId(matchId);
+    setSearchParams({ focus: matchId }, { replace: true });
+  }
+
+  function closeFocus() {
+    setFocusedMatchId(null);
+    setSearchParams({}, { replace: true });
+  }
 
   if (loading) return (
     <div className="vp2-loading">
@@ -94,211 +175,140 @@ export default function ViewerPage() {
   const sizeClass    = getSizeClass(totalMatches);
   const timeStr      = new Date().toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"});
 
-  return (
-    <div className="vp2-page">
+  const courtGrid = buildCourtGrid(allMatches);
+  const focusedMatch = focusedMatchId
+    ? allMatches.find(m => m.matchId === focusedMatchId)
+    : null;
+  const focusedSlot = focusedMatch
+    ? Number(Object.entries(courtGrid).find(([, m]) => m?.matchId === focusedMatchId)?.[0]) || 1
+    : null;
 
-      {/* BACKGROUND */}
-      <div className="vp2-bg" aria-hidden="true">
-        <svg className="vp2-court-svg" viewBox="0 0 100 100" preserveAspectRatio="none">
-          <rect x="4" y="4" width="92" height="92" fill="none" stroke="#c8e63a" strokeWidth="0.25" opacity="0.1"/>
-          <line x1="4" y1="50" x2="96" y2="50" stroke="#c8e63a" strokeWidth="0.5" opacity="0.12"/>
-          <line x1="4" y1="25" x2="96" y2="25" stroke="#c8e63a" strokeWidth="0.2" opacity="0.07" strokeDasharray="1.5 2.5"/>
-          <line x1="4" y1="75" x2="96" y2="75" stroke="#c8e63a" strokeWidth="0.2" opacity="0.07" strokeDasharray="1.5 2.5"/>
-          <line x1="50" y1="25" x2="50" y2="75" stroke="#c8e63a" strokeWidth="0.2" opacity="0.06" strokeDasharray="1 2"/>
-          <circle cx="50" cy="50" r="10" fill="none" stroke="#c8e63a" strokeWidth="0.25" opacity="0.06"/>
-          <circle cx="50" cy="50" r="4"  fill="none" stroke="#c8e63a" strokeWidth="0.15" opacity="0.05"/>
-          <circle cx="4"  cy="50" r="0.8" fill="#c8e63a" opacity="0.2"/>
-          <circle cx="96" cy="50" r="0.8" fill="#c8e63a" opacity="0.2"/>
-          <path d="M4 12 L4 4 L12 4"    fill="none" stroke="#c8e63a" strokeWidth="0.4" opacity="0.15"/>
-          <path d="M88 4 L96 4 L96 12"  fill="none" stroke="#c8e63a" strokeWidth="0.4" opacity="0.15"/>
-          <path d="M4 88 L4 96 L12 96"  fill="none" stroke="#c8e63a" strokeWidth="0.4" opacity="0.15"/>
-          <path d="M88 96 L96 96 L96 88" fill="none" stroke="#c8e63a" strokeWidth="0.4" opacity="0.15"/>
-        </svg>
-        {[
-          {x:2,y:5,s:44,d:18,dl:0},{x:90,y:8,s:32,d:14,dl:2.5},
-          {x:4,y:85,s:52,d:20,dl:1},{x:88,y:82,s:38,d:16,dl:3},
-          {x:48,y:2,s:26,d:12,dl:1.5},{x:50,y:92,s:30,d:15,dl:0.5},
-        ].map((b,i)=>(
-          <div key={i} className="vp2-float-ball" style={{left:`${b.x}%`,top:`${b.y}%`,width:b.s,height:b.s,animationDuration:`${b.d}s`,animationDelay:`${b.dl}s`}}>
-            <PickleballSVG size={b.s}/>
-          </div>
-        ))}
-      </div>
-
-      {/* HEADER */}
-      <div className="vp2-header">
-        <div className="vp2-header-left">
-          <div className="vp2-logo-wrap"><PickleballSVG size={36}/></div>
-          <div className="vp2-title-block">
-            <h1 className="vp2-title">{info.name}</h1>
-            <div className="vp2-subtitle">
-              {info.format==="bo1"?"Single Game":info.format==="bo3"?"Best of 3":"Best of 5"}
-              <span className="vp2-dot-sep">·</span>
-              {totalMatches} matches
-              <span className="vp2-dot-sep">·</span>
-              <span className="vp2-live-badge">● LIVE</span>
-            </div>
-          </div>
-        </div>
-
-        <div className="vp2-header-right">
-          <div className="vp2-progress-block">
-            <svg viewBox="0 0 44 44" className="vp2-ring-svg">
-              <circle cx="22" cy="22" r="18" fill="none" stroke="#2a3348" strokeWidth="3.5"/>
-              <circle cx="22" cy="22" r="18" fill="none" stroke="#c8e63a" strokeWidth="3.5"
-                strokeDasharray={`${2*Math.PI*18*progressPct/100} ${2*Math.PI*18}`}
-                strokeLinecap="round" transform="rotate(-90 22 22)"
-                style={{transition:"stroke-dasharray 0.6s ease"}}
-              />
-              <text x="22" y="26" textAnchor="middle" fontSize="9" fill="#e2e8f0" fontFamily="Bebas Neue,sans-serif" letterSpacing="0.5">
-                {progressPct}%
-              </text>
-            </svg>
-            <div className="vp2-progress-label">
-              <span className="vp2-progress-done">{doneMatches}</span>
-              <span className="vp2-progress-total">/{totalMatches}</span>
-            </div>
-          </div>
-          {liveMatches.length>0 && (
-            <div className="vp2-live-count">
-              <div className="vp2-live-count-dot"/>
-              <span>{liveMatches.length} in progress</span>
-            </div>
-          )}
-          <div className="vp2-clock">{timeStr}</div>
+  if (focusedMatch) {
+    return (
+      <div className="vp2-page led-page led-page-focus">
+        <div className="led-focus-view">
+          <button type="button" className="led-focus-close" onClick={closeFocus} aria-label="Close">
+            ✕ Close
+          </button>
+          <LEDCourtCard
+            courtNum={focusedSlot || 1}
+            match={focusedMatch}
+            format={info?.format}
+            isFlashing={flashId === focusedMatch.matchId}
+            zoomed
+          />
         </div>
       </div>
-
-      {/* CHAMPION */}
-      {info.champion && (
-        <div className="vp2-champion">
-          <div className="vp2-champ-balls"><PickleballSVG size={44}/></div>
-          <div className="vp2-champ-content">
-            <div className="vp2-champ-crown">👑</div>
-            <div className="vp2-champ-name">{info.champion}</div>
-            <div className="vp2-champ-sub">TOURNAMENT CHAMPION</div>
-          </div>
-          <div className="vp2-champ-balls" style={{transform:"scaleX(-1)"}}><PickleballSVG size={44}/></div>
-        </div>
-      )}
-
-      {/* BRACKET */}
-      <div className="vp2-bracket-area">
-        {rounds.map((round, rIdx) => (
-          <div key={rIdx} className="vp2-round-section">
-            <div className="vp2-round-header">
-              <div className="vp2-round-line"/>
-              <div className="vp2-round-title">{getRoundLabel(rIdx, rounds.length)}</div>
-              <div className="vp2-round-line"/>
-            </div>
-            <div
-              className={`vp2-matches-grid ${sizeClass}`}
-              style={{gridTemplateColumns:`repeat(${Math.min(round.length, getMaxCols(round.length, sizeClass))}, 1fr)`}}
-            >
-              {round.map(match=>(
-                <ViewerCard2 key={match.matchId} match={match} format={info.format} sizeClass={sizeClass} isFlashing={flashId===match.matchId}/>
-              ))}
-            </div>
-          </div>
-        ))}
-      </div>
-
-      {/* FOOTER */}
-      <div className="vp2-footer">
-        <div className="vp2-footer-ball"><PickleballSVG size={16}/></div>
-        <span>Scores update automatically</span>
-        <span className="vp2-dot-sep">·</span>
-        <span className="vp2-footer-id">{tournamentId}</span>
-      </div>
-    </div>
-  );
-}
-
-function ViewerCard2({ match, format, sizeClass, isFlashing }) {
-  const { teamA, teamB, sets=[], winner, matchId } = match;
-  const needed    = setsNeeded(format);
-  const winsA     = sets.filter(s=>s.winner==="A").length;
-  const winsB     = sets.filter(s=>s.winner==="B").length;
-  const isPending = !teamA || !teamB;
-  const isFinished= !!winner;
-  const isLive    = !isFinished && sets.length>0;
-  const isBig     = sizeClass==="vc-xl"||sizeClass==="vc-lg";
-
-  function initials(n) {
-    if (!n) return "?";
-    return n.split(" ").map(w=>w[0]).join("").slice(0,2).toUpperCase();
+    );
   }
 
   return (
-    <div className={`vp2-card ${sizeClass} ${isFinished?"vp2-done":isLive?"vp2-live":isPending?"vp2-pending":""} ${isFlashing?"vp2-flash":""}`}>
-
-      <div className="vp2-card-topbar">
-        <span className="vp2-card-id">{matchId}</span>
-        {isLive     && <span className="vp2-status-pill vp2-pill-live">● LIVE</span>}
-        {isFinished && <span className="vp2-status-pill vp2-pill-done">✓</span>}
-        {isPending  && <span className="vp2-status-pill vp2-pill-wait">TBD</span>}
-      </div>
-
-      <div className="vp2-card-body">
-        {/* Team A */}
-        <div className={`vp2-side vp2-side-a ${winner===teamA?"vp2-side-win":winner&&winner!==teamA?"vp2-side-lose":""}`}>
-          {isBig && <div className="vp2-team-avatar vp2-av-a">{initials(teamA)}</div>}
-          <div className="vp2-team-info">
-            <div className="vp2-team-nm">{teamA||"TBD"}</div>
-            {format!=="bo1" && (
-              <div className="vp2-team-pips">
-                {Array.from({length:needed}).map((_,i)=>(
-                  <span key={i} className={`vp2-pip ${i<winsA?"vp2-pip-a":""}`}/>
-                ))}
-              </div>
-            )}
-          </div>
-          {isFinished&&winner===teamA&&<span className="vp2-winner-crown">👑</span>}
-        </div>
-
-        {/* Center */}
-        <div className="vp2-center-col">
-          {format!=="bo1" ? (
-            <div className="vp2-score-display">
-              <span className={`vp2-big-num ${winner===teamA?"vp2-num-win":""}`}>{winsA}</span>
-              <span className="vp2-num-sep">–</span>
-              <span className={`vp2-big-num ${winner===teamB?"vp2-num-win":""}`}>{winsB}</span>
-            </div>
-          ) : (
-            <div className="vp2-vs-badge">VS</div>
-          )}
-          {isLive&&<div className="vp2-live-indicator">● live</div>}
-        </div>
-
-        {/* Team B */}
-        <div className={`vp2-side vp2-side-b ${winner===teamB?"vp2-side-win":winner&&winner!==teamB?"vp2-side-lose":""}`}>
-          {isBig && <div className="vp2-team-avatar vp2-av-b">{initials(teamB)}</div>}
-          <div className="vp2-team-info vp2-info-right">
-            <div className="vp2-team-nm">{teamB||"TBD"}</div>
-            {format!=="bo1" && (
-              <div className="vp2-team-pips">
-                {Array.from({length:needed}).map((_,i)=>(
-                  <span key={i} className={`vp2-pip ${i<winsB?"vp2-pip-b":""}`}/>
-                ))}
-              </div>
-            )}
-          </div>
-          {isFinished&&winner===teamB&&<span className="vp2-winner-crown">👑</span>}
+    <div className="vp2-page led-page">
+      <div className="led-dashboard">
+        <div className="led-grid">
+          {[1, 2, 3, 4, 5, 6].map((courtNum) => {
+            const match = courtGrid[courtNum] || null;
+            return (
+              <LEDCourtCard
+                key={courtNum}
+                courtNum={courtNum}
+                match={match}
+                format={info?.format}
+                isFlashing={match && flashId === match.matchId}
+                onSelect={match ? () => openFocus(match.matchId) : undefined}
+              />
+            );
+          })}
         </div>
       </div>
-
-      {/* Set details for big cards */}
-      {isBig&&sets.length>0&&(
-        <div className="vp2-set-detail">
-          {sets.map((s,i)=>(
-            <div key={i} className={`vp2-set-chip ${s.winner==="A"?"vp2-sc-a":"vp2-sc-b"}`}>
-              <span className="vp2-set-num">S{i+1}</span>
-              {s.scoreA!==undefined&&<span>{s.scoreA}–{s.scoreB}</span>}
-              <span className="vp2-set-winner">{s.winner==="A"?teamA:teamB}</span>
-            </div>
-          ))}
-        </div>
-      )}
     </div>
   );
 }
+
+function LEDCourtCard({ courtNum, match, format, isFlashing, onSelect, zoomed = false }) {
+  const courtLabel = match ? getCourtLabel(match, courtNum) : String(courtNum);
+  const hasAssignedCourt = !!(match?.courtNumber);
+
+  if (!match) {
+    return (
+      <div className={`led-card led-empty ${zoomed ? "led-card-zoomed" : ""}`}>
+        <div className="led-card-topbar">
+          <span className="led-court-label">COURT {courtNum}</span>
+        </div>
+        <div className="led-card-center led-card-center-empty">
+          <span className="led-empty-text">NO MATCH</span>
+        </div>
+      </div>
+    );
+  }
+
+  const { teamA, teamB, sets = [], winner } = match;
+  const isPending = !teamA || !teamB;
+  const isFinished = !!winner;
+  const isLive = !isPending && !isFinished;
+
+  function initials(n) {
+    if (!n) return "?";
+    return n.split(" ").map(w => w[0]).join("").slice(0, 2).toUpperCase();
+  }
+
+  const currentSet = sets.length > 0 ? sets[sets.length - 1] : null;
+  const displayScoreA = isLive
+    ? (match.scoreA !== undefined ? match.scoreA : (currentSet?.scoreA ?? 0))
+    : (isFinished && sets.length > 0 ? sets[sets.length - 1].scoreA : 0);
+  const displayScoreB = isLive
+    ? (match.scoreB !== undefined ? match.scoreB : (currentSet?.scoreB ?? 0))
+    : (isFinished && sets.length > 0 ? sets[sets.length - 1].scoreB : 0);
+
+  const winsA = sets.filter(s => s.winner === "A").length;
+  const winsB = sets.filter(s => s.winner === "B").length;
+
+  return (
+    <div
+      className={`led-card ${isFlashing ? "led-flash" : ""} ${isFinished ? "led-done" : ""} ${zoomed ? "led-card-zoomed" : ""} ${onSelect ? "led-card-clickable" : ""}`}
+      onClick={onSelect}
+      onKeyDown={onSelect ? (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onSelect(); } } : undefined}
+      role={onSelect ? "button" : undefined}
+      tabIndex={onSelect ? 0 : undefined}
+    >
+      <div className="led-card-topbar">
+        <span className="led-court-label">
+          COURT {courtLabel}
+          {hasAssignedCourt && <span className="led-court-assigned"> ●</span>}
+        </span>
+      </div>
+
+      <div className="led-card-center">
+        <div className="led-team-col">
+          <div className="led-team-badge led-badge-a">{initials(teamA)}</div>
+          <div className="led-team-name">{teamA || "TBD"}</div>
+        </div>
+
+        <div className="led-score-col">
+          <div className="led-main-score">
+            <span className="led-score-num led-score-a">{displayScoreA}</span>
+            <span className="led-score-sep">-</span>
+            <span className="led-score-num led-score-b">{displayScoreB}</span>
+          </div>
+          {format !== "bo1" && (
+            <div className="led-set-score">
+              {winsA} <span className="led-set-label">SET</span> {winsB}
+            </div>
+          )}
+        </div>
+
+        <div className="led-team-col">
+          <div className="led-team-badge led-badge-b">{initials(teamB)}</div>
+          <div className="led-team-name">{teamB || "TBD"}</div>
+        </div>
+      </div>
+
+      <div className="led-card-bottom">
+        {onSelect && (
+          <span className="led-tap-hint"></span>
+        )}
+      </div>
+    </div>
+  );
+}
+

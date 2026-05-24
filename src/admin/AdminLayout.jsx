@@ -5,6 +5,7 @@ import { collection, onSnapshot, waitForPendingWrites } from "firebase/firestore
 import { db } from "../firebase";
 import toast from "react-hot-toast";
 import { useAuth } from "../auth/AuthContext";
+import OfflinePreloader from "./OfflinePreloader";
 
 const NAV_LINKS = [
   { to: "/admin/dashboard",   label: "Dashboard"    },
@@ -30,7 +31,6 @@ const NAV_LINKS_AFTER_TOURNAMENT = [
 ];
 
 const SALES_DROPDOWN_LINKS = [
-  { to: "/admin/payments", label: "Payments" },
   { to: "/admin/pos", label: "POS" },
   { to: "/admin/sales-history", label: "Transactions and receipts" },
 ];
@@ -87,7 +87,6 @@ export default function AdminLayout() {
   const tournamentNavActive = TOURNAMENT_SUBLINKS.some((s) => location.pathname === s.to);
   const bookingNavActive = BOOKING_SUBLINKS.some((s) => location.pathname === s.to);
   const salesNavActive =
-    location.pathname === "/admin/payments" ||
     location.pathname === "/admin/pos" ||
     location.pathname === "/admin/sales-history";
 
@@ -224,9 +223,9 @@ export default function AdminLayout() {
                 <span className="material-symbols-outlined text-slate-900 font-bold text-sm">sports_tennis</span>
               </div>
               <div className="flex flex-col min-w-0">
-                <span className="text-sm sm:text-lg font-black text-white tracking-tight truncate">PICKLEPRO</span>
+                <span className="text-sm sm:text-lg font-black text-white tracking-tight truncate">RANAW PICKLEBALL COURT</span>
                 <span className="text-[8px] sm:text-[9px] text-cyan-400 font-bold tracking-[0.15em] sm:tracking-[0.2em] uppercase truncate">
-                  Volt Facility
+                  Court Reservation Management
                 </span>
               </div>
             </div>
@@ -521,7 +520,7 @@ export default function AdminLayout() {
                   <span className="material-symbols-outlined text-slate-900 text-lg">sports_tennis</span>
                 </div>
                 <div className="min-w-0">
-                  <p className="text-sm font-black text-white truncate">PICKLEPRO</p>
+                  <p className="text-sm font-black text-white truncate">RANAW PICKLEBALL</p>
                   <p className="text-[10px] text-slate-400">{currentDate}</p>
                 </div>
               </div>
@@ -631,13 +630,14 @@ export default function AdminLayout() {
       )}
 
       {/* MAIN CONTENT */}
+      <OfflinePreloader />
       <main className="max-w-[1600px] mx-auto p-6 lg:p-10">
         <Outlet />
       </main>
 
       {/* FOOTER */}
       <footer className="max-w-[1600px] mx-auto p-6 mt-12 border-t border-slate-800 flex flex-col md:flex-row justify-between items-center gap-4 text-slate-500 text-xs font-medium">
-        <div>© 2026 PicklePro Volt Management Systems. All rights reserved.</div>
+        <div>© 2026 RANAW PICKLEBALL COURT. All rights reserved.</div>
         <div className="flex items-center gap-6">
           <button
             type="button"

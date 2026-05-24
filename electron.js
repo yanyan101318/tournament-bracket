@@ -15,25 +15,25 @@ let splashWindow = null;
 function startProductionServer() {
   return new Promise((resolve) => {
     if (isDev) { resolve(); return; }
-    
+
     const buildPath = path.join(__dirname, "build");
-    
+
     const server = http.createServer((req, res) => {
       // Basic URL parsing
       const url = new URL(req.url || "/", `http://127.0.0.1:${PORT}`);
       let filePath = path.join(buildPath, url.pathname);
-      
+
       // Default to index.html for root
       if (url.pathname === "/") {
         filePath = path.join(buildPath, "index.html");
       }
-      
+
       // Serve file if it exists, otherwise fallback to index.html (for React Router)
       fs.stat(filePath, (err, stats) => {
         if (err || !stats.isFile()) {
           filePath = path.join(buildPath, "index.html");
         }
-        
+
         // Basic MIME types mapping
         const ext = path.extname(filePath).toLowerCase();
         const mimeTypes = {
@@ -49,7 +49,7 @@ function startProductionServer() {
           '.woff2': 'font/woff2'
         };
         const contentType = mimeTypes[ext] || 'application/octet-stream';
-        
+
         fs.readFile(filePath, (error, content) => {
           if (error) {
             res.writeHead(500);
@@ -61,7 +61,7 @@ function startProductionServer() {
         });
       });
     });
-    
+
     server.listen(PORT, "127.0.0.1", resolve);
   });
 }
@@ -126,7 +126,6 @@ function createMain() {
 
   mainWindow.on("closed", () => { mainWindow = null; });
 }
-
 // ── App lifecycle ──────────────────────────────────────────────────────────
 app.whenReady().then(async () => {
   createSplash();

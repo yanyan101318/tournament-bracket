@@ -35,6 +35,25 @@ import {
 } from "../lib/bookingPayment";
 import { upsertCustomerAfterBooking } from "../lib/crm";
 import BookingReceipt from "./BookingReceipt";
+import ReceiptPrint from "./ReceiptPrint";
+
+function isSlotInPast(dateStr, timeStr) {
+  if (!dateStr || !timeStr) return false;
+  const parts = timeStr.split(' ');
+  if (parts.length !== 2) return false;
+  const time = parts[0];
+  const modifier = parts[1];
+  let [hours, minutes] = time.split(':');
+  if (hours === '12') hours = '00';
+  if (modifier === 'PM' || modifier === 'pm') hours = parseInt(hours, 10) + 12;
+  const hh = parseInt(hours, 10);
+  const mm = parseInt(minutes, 10);
+
+  const [yy, M, d] = dateStr.split('-');
+  const slotDate = new Date(parseInt(yy, 10), parseInt(M, 10) - 1, parseInt(d, 10), hh, mm, 0);
+
+  return slotDate < new Date();
+}
 
 function deriveCourtKind(c) {
   const joined = (c.amenities || [])
@@ -89,6 +108,7 @@ export default function Book() {
   const [cashReceivedInput, setCashReceivedInput] = useState("");
   const [amountPaidInput, setAmountPaidInput] = useState("");
   const [receiptSnapshot, setReceiptSnapshot] = useState(null);
+  const [isPrinting, setIsPrinting] = useState(false);
   const { syncState, wrapSync, setSyncState } = useOfflineSync();
 
   const [form, setForm] = useState({
@@ -490,7 +510,7 @@ export default function Book() {
         contactNumber: String(form.contactNumber).trim(),
         email: String(form.email ?? "").trim() || null,
         userId: user.uid,
-        status: "Pending",
+        status: form.paymentMethod === PAYMENT_CASH ? "Approved" : "Pending",
         createdAt: serverTimestamp(),
         promoCode: appliedPromo?.code || null,
         paymentMethod: form.paymentMethod,
@@ -506,11 +526,11 @@ export default function Book() {
         form.paymentMethod === PAYMENT_GCASH
           ? { ...bookingBase, receiptUrl: receiptUrl || null }
           : {
-              ...bookingBase,
-              receiptUrl: null,
-              cashReceived: cashReceivedRounded,
-              change: changeRounded,
-            };
+            ...bookingBase,
+            receiptUrl: null,
+            cashReceived: cashReceivedRounded,
+            change: changeRounded,
+          };
 
       const bookingRef = doc(collection(db, "bookings"));
       const paymentRef = doc(collection(db, "payments"));
@@ -530,7 +550,7 @@ export default function Book() {
         paymentPlan: form.paymentPlan,
         customerPaymentStatus: payStatus,
         method: form.paymentMethod,
-        paymentStatus: "Pending",
+        paymentStatus: form.paymentMethod === PAYMENT_CASH ? "Approved" : "Pending",
         promoCode: appliedPromo?.code || null,
         discount,
         createdAt: serverTimestamp(),
@@ -540,11 +560,11 @@ export default function Book() {
         form.paymentMethod === PAYMENT_GCASH
           ? { ...paymentBase, paymentImageUrl: receiptUrl || null }
           : {
-              ...paymentBase,
-              paymentImageUrl: null,
-              cashReceived: cashReceivedRounded,
-              change: changeRounded,
-            };
+            ...paymentBase,
+            paymentImageUrl: null,
+            cashReceived: cashReceivedRounded,
+            change: changeRounded,
+          };
 
       const writePromises = Promise.all([
         setDoc(bookingRef, bookingData),
@@ -559,7 +579,7 @@ export default function Book() {
       ]);
 
       await wrapSync(writePromises, {
-        successMsg: "Booking Synced Successfully",
+        successMsg: "RANAW PICKLEBALL COURT booking confirmed successfully",
         offlineMsg: "Saved Offline — Will Sync Automatically",
         errorMsg: "Booking Failed — Retry",
         onSuccess: () => setStep(4),
@@ -569,9 +589,10 @@ export default function Book() {
       const paymentMethodLabel = form.paymentMethod === PAYMENT_CASH ? "Cash" : "GCash";
       const paymentPlanLabel =
         form.paymentPlan === PLAN_FULL ? "Full payment" :
-        form.paymentPlan === PLAN_PARTIAL ? "Down payment" : "Pay later";
+          form.paymentPlan === PLAN_PARTIAL ? "Down payment" : "Pay later";
 
       setReceiptSnapshot({
+        booking: { ...bookingData, id: bookingRef.id },
         transactionId: bookingRef.id,
         date: form.date,
         timeSlot: form.timeSlot,
@@ -597,8 +618,8 @@ export default function Book() {
     }
   };
 
-  const minDate = format(addDays(new Date(), 1), "yyyy-MM-dd");
-  const maxDate = format(addDays(new Date(), 30), "yyyy-MM-dd");
+  const minDate = format(new Date(), "yyyy-MM-dd");
+  const maxDate = format(addDays(new Date(), 90), "yyyy-MM-dd");
 
   if (step === 4 && receiptSnapshot) {
     return (
@@ -623,8 +644,16 @@ export default function Book() {
           <div className="flex flex-col sm:flex-row gap-3">
             <button
               type="button"
-              onClick={() => navigate(adminMode ? "/admin/bookings" : "/bookings")}
+              onClick={() => setIsPrinting(true)}
               className="btn-primary flex-1 text-sm py-3"
+              style={{ background: "var(--pickle)", color: "#000", border: "none" }}
+            >
+              Print Receipt
+            </button>
+            <button
+              type="button"
+              onClick={() => navigate(adminMode ? "/admin/bookings" : "/bookings")}
+              className="btn-secondary flex-1 text-sm py-3"
             >
               {adminMode ? "View all bookings" : "View My Bookings"}
             </button>
@@ -653,6 +682,15 @@ export default function Book() {
             </button>
           </div>
         </div>
+
+        {isPrinting && (
+          <ReceiptPrint
+            booking={receiptSnapshot.booking}
+            receiptId={"RCPT-" + receiptSnapshot.transactionId.substring(0, 5).toUpperCase() + "-" + Math.floor(100 + Math.random() * 900)}
+            printedBy={adminMode ? "Admin" : "Customer"}
+            onAfterPrint={() => setIsPrinting(false)}
+          />
+        )}
       </div>
     );
   }
@@ -664,733 +702,723 @@ export default function Book() {
           adminMode ? "court-pattern pt-4 pb-10 px-2 sm:px-4" : "min-h-screen court-pattern pt-20 pb-12 px-4"
         }
       >
-      <div className="max-w-5xl mx-auto">
-        {/* Header */}
-        <div className="text-center mb-8 pt-4">
-          <h1 className="font-display text-4xl tracking-wider text-white">BOOK A <span className="gradient-text">COURT</span></h1>
-          <p className="text-slate-500 mt-1 text-sm">Complete all steps to confirm your reservation</p>
-        </div>
+        <div className="max-w-5xl mx-auto">
+          {/* Header */}
+          <div className="text-center mb-8 pt-4">
+            <h1 className="font-display text-4xl tracking-wider text-white">BOOK A <span className="gradient-text">COURT</span></h1>
+            <p className="text-slate-500 mt-1 text-sm">Complete all steps to confirm your reservation</p>
+          </div>
 
-        {/* Steps */}
-        <div className="flex items-center justify-center gap-2 mb-10">
-          {[1, 2, 3].map((s) => (
-            <div key={s} className="flex items-center gap-2">
-              <div className={`w-9 h-9 rounded-full flex items-center justify-center text-sm font-semibold transition-all ${
-                step > s ? "bg-green-500 text-slate-950" :
-                step === s ? "bg-green-500/20 border-2 border-green-500 text-green-400" :
-                "bg-slate-800 text-slate-600"
-              }`}>
-                {step > s ? <Check size={16} /> : s}
+          {/* Steps */}
+          <div className="flex items-center justify-center gap-2 mb-10">
+            {[1, 2, 3].map((s) => (
+              <div key={s} className="flex items-center gap-2">
+                <div className={`w-9 h-9 rounded-full flex items-center justify-center text-sm font-semibold transition-all ${step > s ? "bg-green-500 text-slate-950" :
+                    step === s ? "bg-green-500/20 border-2 border-green-500 text-green-400" :
+                      "bg-slate-800 text-slate-600"
+                  }`}>
+                  {step > s ? <Check size={16} /> : s}
+                </div>
+                <span className={`text-sm font-medium hidden sm:block ${step >= s ? "text-white" : "text-slate-600"}`}>
+                  {s === 1 ? "Court & Schedule" : s === 2 ? "Add-ons" : "Payment"}
+                </span>
+                {s < 3 && <ChevronRight size={16} className="text-slate-700 mx-1" />}
               </div>
-              <span className={`text-sm font-medium hidden sm:block ${step >= s ? "text-white" : "text-slate-600"}`}>
-                {s === 1 ? "Court & Schedule" : s === 2 ? "Add-ons" : "Payment"}
-              </span>
-              {s < 3 && <ChevronRight size={16} className="text-slate-700 mx-1" />}
-            </div>
-          ))}
-        </div>
+            ))}
+          </div>
 
-        <div className="grid lg:grid-cols-3 gap-6">
-          {/* Main Form */}
-          <div className="lg:col-span-2 space-y-5">
+          <div className="grid lg:grid-cols-3 gap-6">
+            {/* Main Form */}
+            <div className="lg:col-span-2 space-y-5">
 
-            {/* Step 1 */}
-            {step === 1 && (
-              <>
-                {/* Court Selection */}
-                <div className="card p-6">
-                  <h3 className="text-white font-semibold mb-4 flex items-center gap-2">
-                    <Calendar size={18} className="text-green-400" /> Select Court
-                  </h3>
-                  {!courtsReady ? (
-                    <div className="flex items-center justify-center gap-2 py-12 text-slate-400 text-sm">
-                      <svg className="animate-spin w-5 h-5 text-green-400" viewBox="0 0 24 24" fill="none" aria-hidden>
-                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4l3-3-3-3v4a8 8 0 00-8 8h4z" />
-                      </svg>
-                      Loading courts…
-                    </div>
-                  ) : activeCourts.length === 0 ? (
-                    <div className="text-center py-10 border border-dashed border-slate-700 rounded-xl">
-                      <p className="text-slate-400 text-sm mb-3">No active courts available yet.</p>
-                      {adminMode ? (
-                        <Link
-                          to="/admin/courts"
-                          className="inline-flex items-center gap-1 text-cyan-400 text-sm font-semibold hover:underline"
+              {/* Step 1 */}
+              {step === 1 && (
+                <>
+                  {/* Court Selection */}
+                  <div className="card p-6">
+                    <h3 className="text-white font-semibold mb-4 flex items-center gap-2">
+                      <Calendar size={18} className="text-green-400" /> Select Court
+                    </h3>
+                    {!courtsReady ? (
+                      <div className="flex items-center justify-center gap-2 py-12 text-slate-400 text-sm">
+                        <svg className="animate-spin w-5 h-5 text-green-400" viewBox="0 0 24 24" fill="none" aria-hidden>
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4l3-3-3-3v4a8 8 0 00-8 8h4z" />
+                        </svg>
+                        Loading courts…
+                      </div>
+                    ) : activeCourts.length === 0 ? (
+                      <div className="text-center py-10 border border-dashed border-slate-700 rounded-xl">
+                        <p className="text-slate-400 text-sm mb-3">No active courts available yet.</p>
+                        {adminMode ? (
+                          <Link
+                            to="/admin/courts"
+                            className="inline-flex items-center gap-1 text-cyan-400 text-sm font-semibold hover:underline"
+                          >
+                            Add courts in Court Management →
+                          </Link>
+                        ) : (
+                          <p className="text-slate-500 text-xs">Ask your facility admin to add courts.</p>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="grid sm:grid-cols-2 gap-3">
+                        {activeCourts.map((c) => {
+                          const kind = deriveCourtKind(c);
+                          const price = Number(c.pricePerHour) || 0;
+                          const kindClass =
+                            kind === "Indoor"
+                              ? "bg-blue-500/20 text-blue-400"
+                              : kind === "Outdoor"
+                                ? "bg-orange-500/20 text-orange-400"
+                                : "bg-slate-500/20 text-slate-400";
+                          return (
+                            <button
+                              key={c.id}
+                              type="button"
+                              onClick={() => setForm({ ...form, courtId: c.id, timeSlot: "" })}
+                              className={`p-4 rounded-xl border text-left transition-all ${form.courtId === c.id
+                                  ? "border-green-500 bg-green-500/10"
+                                  : "border-slate-700 bg-slate-800 hover:border-slate-600"
+                                }`}
+                            >
+                              <div className="flex items-center justify-between mb-1">
+                                <span className="text-white font-medium text-sm">{c.name}</span>
+                                {form.courtId === c.id && <Check size={14} className="text-green-400" />}
+                              </div>
+                              <span className={`text-xs px-2 py-0.5 rounded-full ${kindClass}`}>
+                                {kind}
+                              </span>
+                              <div className="text-green-400 font-semibold mt-2">
+                                ₱{price.toLocaleString()}
+                                <span className="text-slate-500 text-xs font-normal">/hr</span>
+                              </div>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Player Info */}
+                  <div className="card p-6">
+                    <h3 className="text-white font-semibold mb-4 flex items-center gap-2">
+                      <User size={18} className="text-green-400" /> Player Information
+                    </h3>
+                    <div className="grid sm:grid-cols-2 gap-4">
+                      <div className={adminMode ? "sm:col-span-2" : ""}>
+                        <label className="label">Player Name</label>
+                        <div className={adminMode ? "relative" : undefined}>
+                          <input
+                            type="text"
+                            required
+                            className="input-field"
+                            placeholder="Full name"
+                            autoComplete={adminMode ? "off" : "name"}
+                            value={form.playerName}
+                            onChange={(e) => {
+                              setForm({ ...form, playerName: e.target.value });
+                              if (adminMode) setNameSuggestOpen(true);
+                            }}
+                            onFocus={() => adminMode && setNameSuggestOpen(true)}
+                            onBlur={() => {
+                              if (!adminMode) return;
+                              setTimeout(() => {
+                                if (!nameSuggestRef.current?.contains(document.activeElement)) {
+                                  setNameSuggestOpen(false);
+                                }
+                              }, 150);
+                            }}
+                          />
+                          {adminMode && nameSuggestOpen && nameSuggestions.length > 0 && (
+                            <ul
+                              ref={nameSuggestRef}
+                              className="book-name-suggestions absolute left-0 right-0 top-full z-[300] mt-1.5 max-h-48 overflow-y-auto rounded-lg py-1"
+                              role="listbox"
+                            >
+                              {nameSuggestions.map((name) => (
+                                <li
+                                  key={name}
+                                  role="option"
+                                  aria-selected={form.playerName.trim() === name.trim()}
+                                >
+                                  <button
+                                    type="button"
+                                    className="book-name-suggestions__item w-full text-left px-3 py-2.5 text-sm font-medium"
+                                    onMouseDown={(e) => e.preventDefault()}
+                                    onClick={() => {
+                                      setForm((f) => ({ ...f, playerName: name }));
+                                      setNameSuggestOpen(false);
+                                    }}
+                                  >
+                                    {name}
+                                  </button>
+                                </li>
+                              ))}
+                            </ul>
+                          )}
+                        </div>
+                      </div>
+                      <div>
+                        <label className="label">Number of Players</label>
+                        <select
+                          className="input-field"
+                          value={form.players}
+                          onChange={(e) => setForm({ ...form, players: Number(e.target.value) })}
                         >
-                          Add courts in Court Management →
-                        </Link>
-                      ) : (
-                        <p className="text-slate-500 text-xs">Ask your facility admin to add courts.</p>
-                      )}
+                          {[1, 2, 3, 4].map((n) => (
+                            <option key={n} value={n}>{n} {n === 1 ? "player" : "players"}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="sm:col-span-2">
+                        <label className="label">Contact number *</label>
+                        <input
+                          type="tel"
+                          className="input-field"
+                          placeholder="09XX XXX XXXX"
+                          value={form.contactNumber}
+                          onChange={(e) => setForm({ ...form, contactNumber: e.target.value })}
+                        />
+                      </div>
+                      <div className="sm:col-span-2">
+                        <label className="label">Email (optional)</label>
+                        <input
+                          type="email"
+                          className="input-field"
+                          placeholder="you@example.com"
+                          value={form.email}
+                          onChange={(e) => setForm({ ...form, email: e.target.value })}
+                        />
+                      </div>
                     </div>
-                  ) : (
-                    <div className="grid sm:grid-cols-2 gap-3">
-                      {activeCourts.map((c) => {
-                        const kind = deriveCourtKind(c);
-                        const price = Number(c.pricePerHour) || 0;
-                        const kindClass =
-                          kind === "Indoor"
-                            ? "bg-blue-500/20 text-blue-400"
-                            : kind === "Outdoor"
-                              ? "bg-orange-500/20 text-orange-400"
-                              : "bg-slate-500/20 text-slate-400";
+                  </div>
+
+                  {/* Date & Time */}
+                  <div className="card p-6">
+                    <h3 className="text-white font-semibold mb-4 flex items-center gap-2">
+                      <Clock size={18} className="text-green-400" /> Date & Time
+                    </h3>
+                    <div className="grid sm:grid-cols-2 gap-4 mb-5">
+                      <div>
+                        <label className="label">Date</label>
+                        <input
+                          type="date"
+                          className="input-field"
+                          min={minDate}
+                          max={maxDate}
+                          value={form.date}
+                          onChange={(e) => setForm({ ...form, date: e.target.value, timeSlot: "" })}
+                        />
+                      </div>
+                      <div>
+                        <label className="label">Duration</label>
+                        <select
+                          className="input-field"
+                          value={form.duration}
+                          onChange={(e) => setForm({ ...form, duration: Number(e.target.value) })}
+                        >
+                          {DURATIONS.map((d) => (
+                            <option key={d} value={d}>{d} {d === 1 ? "hour" : "hours"}</option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+                    <label className="label">Available Time Slots</label>
+                    <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
+                      {TIME_SLOTS.map((slot) => {
+                        const inPast = isSlotInPast(form.date, slot);
+                        const isTaken = !inPast && !isSlotStartAvailableForDuration(
+                          slot,
+                          form.duration,
+                          dayBookings
+                        );
+                        const isUnavailable = inPast || isTaken;
+                        
                         return (
                           <button
-                            key={c.id}
+                            key={slot}
                             type="button"
-                            onClick={() => setForm({ ...form, courtId: c.id, timeSlot: "" })}
-                            className={`p-4 rounded-xl border text-left transition-all ${
-                              form.courtId === c.id
-                                ? "border-green-500 bg-green-500/10"
-                                : "border-slate-700 bg-slate-800 hover:border-slate-600"
-                            }`}
+                            disabled={isUnavailable}
+                            onClick={() => setForm({ ...form, timeSlot: slot })}
+                            className={`py-2.5 px-3 rounded-xl text-xs font-medium transition-all ${isUnavailable ? "bg-red-500/10 border border-red-500/20 text-red-400/50 cursor-not-allowed" :
+                                form.timeSlot === slot ? "bg-green-500 text-slate-950 glow-green" :
+                                  "bg-slate-800 text-slate-400 hover:bg-slate-700 hover:text-white border border-slate-700"
+                              }`}
                           >
-                            <div className="flex items-center justify-between mb-1">
-                              <span className="text-white font-medium text-sm">{c.name}</span>
-                              {form.courtId === c.id && <Check size={14} className="text-green-400" />}
-                            </div>
-                            <span className={`text-xs px-2 py-0.5 rounded-full ${kindClass}`}>
-                              {kind}
-                            </span>
-                            <div className="text-green-400 font-semibold mt-2">
-                              ₱{price.toLocaleString()}
-                              <span className="text-slate-500 text-xs font-normal">/hr</span>
-                            </div>
+                            {slot}
+                            {isTaken && <div className="text-[10px] leading-tight mt-0.5">Booked</div>}
+                            {inPast && <div className="text-[10px] leading-tight mt-0.5">Not Available</div>}
                           </button>
                         );
                       })}
                     </div>
-                  )}
-                </div>
-
-                {/* Player Info */}
-                <div className="card p-6">
-                  <h3 className="text-white font-semibold mb-4 flex items-center gap-2">
-                    <User size={18} className="text-green-400" /> Player Information
-                  </h3>
-                  <div className="grid sm:grid-cols-2 gap-4">
-                    <div className={adminMode ? "sm:col-span-2" : ""}>
-                      <label className="label">Player Name</label>
-                      <div className={adminMode ? "relative" : undefined}>
-                        <input
-                          type="text"
-                          required
-                          className="input-field"
-                          placeholder="Full name"
-                          autoComplete={adminMode ? "off" : "name"}
-                          value={form.playerName}
-                          onChange={(e) => {
-                            setForm({ ...form, playerName: e.target.value });
-                            if (adminMode) setNameSuggestOpen(true);
-                          }}
-                          onFocus={() => adminMode && setNameSuggestOpen(true)}
-                          onBlur={() => {
-                            if (!adminMode) return;
-                            setTimeout(() => {
-                              if (!nameSuggestRef.current?.contains(document.activeElement)) {
-                                setNameSuggestOpen(false);
-                              }
-                            }, 150);
-                          }}
-                        />
-                        {adminMode && nameSuggestOpen && nameSuggestions.length > 0 && (
-                          <ul
-                            ref={nameSuggestRef}
-                            className="book-name-suggestions absolute left-0 right-0 top-full z-[300] mt-1.5 max-h-48 overflow-y-auto rounded-lg py-1"
-                            role="listbox"
-                          >
-                            {nameSuggestions.map((name) => (
-                              <li
-                                key={name}
-                                role="option"
-                                aria-selected={form.playerName.trim() === name.trim()}
-                              >
-                                <button
-                                  type="button"
-                                  className="book-name-suggestions__item w-full text-left px-3 py-2.5 text-sm font-medium"
-                                  onMouseDown={(e) => e.preventDefault()}
-                                  onClick={() => {
-                                    setForm((f) => ({ ...f, playerName: name }));
-                                    setNameSuggestOpen(false);
-                                  }}
-                                >
-                                  {name}
-                                </button>
-                              </li>
-                            ))}
-                          </ul>
-                        )}
-                      </div>
-                    </div>
-                    <div>
-                      <label className="label">Number of Players</label>
-                      <select
-                        className="input-field"
-                        value={form.players}
-                        onChange={(e) => setForm({ ...form, players: Number(e.target.value) })}
-                      >
-                        {[1, 2, 3, 4].map((n) => (
-                          <option key={n} value={n}>{n} {n === 1 ? "player" : "players"}</option>
-                        ))}
-                      </select>
-                    </div>
-                    <div className="sm:col-span-2">
-                      <label className="label">Contact number *</label>
-                      <input
-                        type="tel"
-                        className="input-field"
-                        placeholder="09XX XXX XXXX"
-                        value={form.contactNumber}
-                        onChange={(e) => setForm({ ...form, contactNumber: e.target.value })}
-                      />
-                    </div>
-                    <div className="sm:col-span-2">
-                      <label className="label">Email (optional)</label>
-                      <input
-                        type="email"
-                        className="input-field"
-                        placeholder="you@example.com"
-                        value={form.email}
-                        onChange={(e) => setForm({ ...form, email: e.target.value })}
-                      />
-                    </div>
                   </div>
-                </div>
 
-                {/* Date & Time */}
-                <div className="card p-6">
-                  <h3 className="text-white font-semibold mb-4 flex items-center gap-2">
-                    <Clock size={18} className="text-green-400" /> Date & Time
-                  </h3>
-                  <div className="grid sm:grid-cols-2 gap-4 mb-5">
-                    <div>
-                      <label className="label">Date</label>
-                      <input
-                        type="date"
-                        className="input-field"
-                        min={minDate}
-                        max={maxDate}
-                        value={form.date}
-                        onChange={(e) => setForm({ ...form, date: e.target.value, timeSlot: "" })}
-                      />
-                    </div>
-                    <div>
-                      <label className="label">Duration</label>
-                      <select
-                        className="input-field"
-                        value={form.duration}
-                        onChange={(e) => setForm({ ...form, duration: Number(e.target.value) })}
-                      >
-                        {DURATIONS.map((d) => (
-                          <option key={d} value={d}>{d} {d === 1 ? "hour" : "hours"}</option>
-                        ))}
-                      </select>
-                    </div>
-                  </div>
-                  <label className="label">Available Time Slots</label>
-                  <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
-                    {TIME_SLOTS.map((slot) => {
-                      const available = isSlotStartAvailableForDuration(
-                        slot,
-                        form.duration,
-                        dayBookings
-                      );
-                      const isBooked = !available;
-                      return (
-                        <button
-                          key={slot}
-                          type="button"
-                          disabled={isBooked}
-                          onClick={() => setForm({ ...form, timeSlot: slot })}
-                          className={`py-2.5 px-3 rounded-xl text-xs font-medium transition-all ${
-                            isBooked ? "bg-red-500/10 border border-red-500/20 text-red-400/50 cursor-not-allowed" :
-                            form.timeSlot === slot ? "bg-green-500 text-slate-950 glow-green" :
-                            "bg-slate-800 text-slate-400 hover:bg-slate-700 hover:text-white border border-slate-700"
-                          }`}
-                        >
-                          {slot}
-                          {isBooked && <div className="text-[10px] leading-tight mt-0.5">Booked</div>}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                {/* Notes */}
-                <div className="card p-6">
-                  <h3 className="text-white font-semibold mb-3 flex items-center gap-2">
-                    <FileText size={18} className="text-green-400" /> Special Notes (Optional)
-                  </h3>
-                  <textarea
-                    rows={3}
-                    className="input-field resize-none"
-                    placeholder="Any special requests, skill level, purpose of booking..."
-                    value={form.notes}
-                    onChange={(e) => setForm({ ...form, notes: e.target.value })}
-                  />
-                </div>
-              </>
-            )}
-
-            {/* Step 2 - Equipment */}
-            {step === 2 && (
-              <div className="card p-6">
-                <h3 className="text-white font-semibold mb-1 flex items-center gap-2">
-                  <Package size={18} className="text-green-400" /> Equipment Rental Add-ons
-                </h3>
-                <p className="text-slate-500 text-sm mb-5">Optional extras to enhance your session</p>
-                <div className="space-y-3">
-                  {rentalAddOns.length === 0 ? (
-                    <p className="text-slate-500 text-sm py-4 text-center border border-dashed border-slate-700 rounded-xl">
-                      No add-ons available yet. Add priced inventory items (or set type to "rental").
-                    </p>
-                  ) : (
-                    rentalAddOns.map((item) => {
-                      const price = getRentalItemPrice(item);
-                      return (
-                        <button
-                          key={item.id}
-                          type="button"
-                          onClick={() => toggleEquipment(item.id)}
-                          className={`w-full flex items-center justify-between p-4 rounded-xl border transition-all ${
-                            form.equipment.includes(item.id)
-                              ? "border-green-500 bg-green-500/10"
-                              : "border-slate-700 bg-slate-800 hover:border-slate-600"
-                          }`}
-                        >
-                          <div className="flex items-center gap-3 min-w-0">
-                            <Package className="text-slate-400 shrink-0" size={28} strokeWidth={1.5} />
-                            <div className="text-left min-w-0">
-                              <div className="text-white font-medium truncate">{item.name || "Rental"}</div>
-                              <div className="text-slate-500 text-sm">₱{price.toLocaleString()} per session</div>
-                            </div>
-                          </div>
-                          <div className={`w-6 h-6 rounded-full border-2 flex items-center justify-center shrink-0 transition-all ${
-                            form.equipment.includes(item.id) ? "border-green-500 bg-green-500" : "border-slate-600"
-                          }`}>
-                            {form.equipment.includes(item.id) && <Check size={12} className="text-slate-950" />}
-                          </div>
-                        </button>
-                      );
-                    })
-                  )}
-                </div>
-
-                {/* Promo Code */}
-                <div className="mt-6 border-t border-slate-800 pt-5">
-                  <label className="label">Promo Code</label>
-                  <div className="flex gap-2">
-                    <input
-                      type="text"
-                      className="input-field flex-1"
-                      placeholder="Enter code (e.g. PICKLE10)"
-                      value={promoInput}
-                      onChange={(e) => setPromoInput(e.target.value.toUpperCase())}
+                  {/* Notes */}
+                  <div className="card p-6">
+                    <h3 className="text-white font-semibold mb-3 flex items-center gap-2">
+                      <FileText size={18} className="text-green-400" /> Special Notes (Optional)
+                    </h3>
+                    <textarea
+                      rows={3}
+                      className="input-field resize-none"
+                      placeholder="Any special requests, skill level, purpose of booking..."
+                      value={form.notes}
+                      onChange={(e) => setForm({ ...form, notes: e.target.value })}
                     />
-                    <button onClick={applyPromo} className="btn-secondary px-4 py-2 text-sm whitespace-nowrap">
-                      Apply
-                    </button>
                   </div>
-                  {appliedPromo && (
-                    <div className="flex items-center gap-2 mt-2 text-green-400 text-sm">
-                      <Check size={14} /> {appliedPromo.label} applied!
-                    </div>
-                  )}
-                  <p className="text-slate-600 text-xs mt-2">Try: PICKLE10, NEWUSER, MEMBER20</p>
-                </div>
-              </div>
-            )}
+                </>
+              )}
 
-            {/* Step 3 - Payment */}
-            {step === 3 && (
-              <div className="card p-6">
-                <h3 className="text-white font-semibold mb-1 flex items-center gap-2">
-                  <Smartphone size={18} className="text-green-400" /> Payment
-                </h3>
-                <p className="text-slate-500 text-sm mb-5">Plan, method, and proof</p>
-
-                <label className="label">Payment plan</label>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mb-6">
-                  {[
-                    { id: PLAN_FULL, label: "Full payment" },
-                    { id: PLAN_PARTIAL, label: "Down payment" },
-                    { id: PLAN_LATER, label: "Pay later" },
-                  ].map((p) => (
-                    <button
-                      key={p.id}
-                      type="button"
-                      onClick={() => selectPaymentPlan(p.id)}
-                      className={`rounded-xl border py-3 px-2 text-xs font-semibold transition-all ${
-                        form.paymentPlan === p.id
-                          ? "border-cyan-500 bg-cyan-500/15 text-cyan-300"
-                          : "border-slate-700 bg-slate-800/80 text-slate-400 hover:border-slate-600"
-                      }`}
-                    >
-                      {p.label}
-                    </button>
-                  ))}
-                </div>
-
-                {form.paymentPlan === PLAN_PARTIAL && (
-                  <div className="mb-6">
-                    <label className="label">Amount paying now *</label>
-                    <input
-                      type="text"
-                      inputMode="decimal"
-                      className="input-field"
-                      placeholder="0.00"
-                      value={amountPaidInput}
-                      onChange={(e) => setAmountPaidInput(e.target.value)}
-                    />
-                    <p className="text-slate-500 text-xs mt-1">
-                      Balance after: <strong className="text-amber-400">₱{remainingBalance.toFixed(2)}</strong>
-                    </p>
-                  </div>
-                )}
-
-                <label className="label">Payment method</label>
-                <div className="grid grid-cols-2 gap-3 mb-6">
-                  <button
-                    type="button"
-                    onClick={() => selectPaymentMethod(PAYMENT_GCASH)}
-                    className={`flex items-center justify-center gap-2 rounded-xl border py-3.5 px-3 text-sm font-semibold min-h-[48px] transition-all ${
-                      form.paymentMethod === PAYMENT_GCASH
-                        ? "border-green-500 bg-green-500/15 text-green-400"
-                        : "border-slate-700 bg-slate-800/80 text-slate-400"
-                    }`}
-                  >
-                    <Smartphone size={18} /> GCash
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => selectPaymentMethod(PAYMENT_CASH)}
-                    className={`flex items-center justify-center gap-2 rounded-xl border py-3.5 px-3 text-sm font-semibold min-h-[48px] transition-all ${
-                      form.paymentMethod === PAYMENT_CASH
-                        ? "border-amber-500 bg-amber-500/15 text-amber-400"
-                        : "border-slate-700 bg-slate-800/80 text-slate-400"
-                    }`}
-                  >
-                    <Banknote size={18} /> Cash
-                  </button>
-                </div>
-
-                <div
-                  className={`transition-[max-height,opacity] duration-300 overflow-hidden ${
-                    form.paymentMethod === PAYMENT_GCASH ? "max-h-[2000px] opacity-100" : "max-h-0 opacity-0 pointer-events-none"
-                  }`}
-                  aria-hidden={form.paymentMethod !== PAYMENT_GCASH}
-                >
-                  {form.paymentMethod === PAYMENT_GCASH && (
-                    <>
-                      <div className="bg-green-500/5 border border-green-500/20 rounded-xl p-5 mb-5">
-                        <div className="flex items-start gap-3">
-                          <AlertCircle size={18} className="text-green-400 mt-0.5 shrink-0" />
-                          <div className="text-sm">
-                            <p className="text-white font-medium mb-1">GCash instructions</p>
-                            {amountPaidNow <= 0 ? (
-                              <p className="text-slate-400">No GCash transfer needed for pay later.</p>
-                            ) : (
-                              <ol className="text-slate-400 space-y-1 list-decimal list-inside">
-                                <li>Open GCash on your phone</li>
-                                <li>
-                                  Send <strong className="text-green-400">₱{amountPaidNow.toFixed(2)}</strong> to:{" "}
-                                  <strong className="text-white">09XX-XXX-XXXX</strong>
-                                </li>
-                                <li>Account Name: <strong className="text-white">PickleZone Inc.</strong></li>
-                                <li>Screenshot the receipt and upload below</li>
-                              </ol>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                      {amountPaidNow > 0 && (
-                        <>
-                          <label className="label">Upload GCash receipt *</label>
-                          <div
-                            role="button"
-                            tabIndex={0}
-                            onKeyDown={(e) => {
-                              if (e.key === "Enter" || e.key === " ") {
-                                e.preventDefault();
-                                fileInputRef.current?.click();
-                              }
-                            }}
-                            onClick={() => fileInputRef.current?.click()}
-                            className={`border-2 border-dashed rounded-xl p-8 text-center cursor-pointer ${
-                              paymentImgUrl ? "border-green-500 bg-green-500/5" : "border-slate-700 hover:border-slate-500"
-                            }`}
-                          >
-                            {paymentImgUrl ? (
-                              <div>
-                                <img src={paymentImgUrl} alt="Receipt" className="max-h-40 mx-auto rounded-lg mb-3 object-contain" />
-                                <p className="text-green-400 text-sm font-medium flex items-center justify-center gap-1">
-                                  <Check size={14} /> Receipt uploaded
-                                </p>
-                              </div>
-                            ) : (
-                              <div>
-                                <Upload size={32} className="text-slate-600 mx-auto mb-2" />
-                                <p className="text-slate-400 text-sm">Upload GCash screenshot</p>
-                              </div>
-                            )}
-                            <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleFileChange} />
-                          </div>
-                          {paymentImgUrl && (
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setPaymentImg(null);
-                                setPaymentImgUrl("");
-                                if (fileInputRef.current) fileInputRef.current.value = "";
-                              }}
-                              className="mt-2 text-red-400 hover:text-red-300 text-xs flex items-center gap-1"
-                            >
-                              <X size={12} /> Remove image
-                            </button>
-                          )}
-                        </>
-                      )}
-                    </>
-                  )}
-                </div>
-
-                <div
-                  className={`transition-[max-height,opacity] duration-300 overflow-hidden ${
-                    form.paymentMethod === PAYMENT_CASH ? "max-h-[2000px] opacity-100" : "max-h-0 opacity-0 pointer-events-none"
-                  }`}
-                  aria-hidden={form.paymentMethod !== PAYMENT_CASH}
-                >
-                  {form.paymentMethod === PAYMENT_CASH && (
-                    <div className="space-y-5">
-                      <div className="bg-amber-500/5 border border-amber-500/20 rounded-xl p-5">
-                        <p className="text-white font-medium text-sm mb-1">Cash</p>
-                        <p className="text-slate-300 text-sm">
-                          {form.paymentPlan === PLAN_LATER
-                            ? "You will pay in cash at the facility before play."
-                            : `Bring cash — amount due now: ₱${cashDueNow.toFixed(2)} (total booking ₱${total.toFixed(2)})`}
-                        </p>
-                      </div>
-                      {form.paymentPlan !== PLAN_LATER && (
-                        <div className="grid sm:grid-cols-2 gap-4">
-                          <div>
-                            <label className="label">Cash received *</label>
-                            <div className="relative">
-                              <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 text-sm"></span>
-                              <input
-                                type="text"
-                                inputMode="decimal"
-                                className="input-field pl-8"
-                                placeholder="0.00"
-                                value={cashReceivedInput}
-                                onChange={(e) => setCashReceivedInput(e.target.value)}
-                              />
-                            </div>
-                          </div>
-                          <div>
-                            <label className="label">Change</label>
-                            <div
-                              className={`input-field flex items-center min-h-[42px] cursor-default ${
-                                cashChangeUi.variant === "danger"
-                                  ? "text-red-400 border-red-500/30 bg-red-500/5"
-                                  : cashChangeUi.variant === "ok"
-                                    ? "text-emerald-400"
-                                    : "text-slate-500"
+              {/* Step 2 - Equipment */}
+              {step === 2 && (
+                <div className="card p-6">
+                  <h3 className="text-white font-semibold mb-1 flex items-center gap-2">
+                    <Package size={18} className="text-green-400" /> Equipment Rental Add-ons
+                  </h3>
+                  <p className="text-slate-500 text-sm mb-5">Optional extras to enhance your session</p>
+                  <div className="space-y-3">
+                    {rentalAddOns.length === 0 ? (
+                      <p className="text-slate-500 text-sm py-4 text-center border border-dashed border-slate-700 rounded-xl">
+                        No add-ons available yet. Add priced inventory items (or set type to "rental").
+                      </p>
+                    ) : (
+                      rentalAddOns.map((item) => {
+                        const price = getRentalItemPrice(item);
+                        return (
+                          <button
+                            key={item.id}
+                            type="button"
+                            onClick={() => toggleEquipment(item.id)}
+                            className={`w-full flex items-center justify-between p-4 rounded-xl border transition-all ${form.equipment.includes(item.id)
+                                ? "border-green-500 bg-green-500/10"
+                                : "border-slate-700 bg-slate-800 hover:border-slate-600"
                               }`}
-                            >
-                              {cashChangeUi.text}
+                          >
+                            <div className="flex items-center gap-3 min-w-0">
+                              <Package className="text-slate-400 shrink-0" size={28} strokeWidth={1.5} />
+                              <div className="text-left min-w-0">
+                                <div className="text-white font-medium truncate">{item.name || "Rental"}</div>
+                                <div className="text-slate-500 text-sm">₱{price.toLocaleString()} per session</div>
+                              </div>
                             </div>
-                          </div>
-                        </div>
-                      )}
+                            <div className={`w-6 h-6 rounded-full border-2 flex items-center justify-center shrink-0 transition-all ${form.equipment.includes(item.id) ? "border-green-500 bg-green-500" : "border-slate-600"
+                              }`}>
+                              {form.equipment.includes(item.id) && <Check size={12} className="text-slate-950" />}
+                            </div>
+                          </button>
+                        );
+                      })
+                    )}
+                  </div>
+
+                  {/* Promo Code */}
+                  <div className="mt-6 border-t border-slate-800 pt-5">
+                    <label className="label">Promo Code</label>
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        className="input-field flex-1"
+                        placeholder="Enter code (e.g. PICKLE10)"
+                        value={promoInput}
+                        onChange={(e) => setPromoInput(e.target.value.toUpperCase())}
+                      />
+                      <button onClick={applyPromo} className="btn-secondary px-4 py-2 text-sm whitespace-nowrap">
+                        Apply
+                      </button>
                     </div>
-                  )}
-                </div>
-              </div>
-            )}
-
-            {/* Nav Buttons */}
-            <div className="flex gap-3">
-              {step > 1 && (
-                <button onClick={() => setStep(step - 1)} className="btn-secondary flex-1 py-3">
-                  ← Back
-                </button>
-              )}
-              {step < 3 ? (
-                <button
-                  onClick={() => {
-                    if (step === 1 && !form.timeSlot) return toast.error("Please select a time slot");
-                    if (step === 1 && !form.playerName) return toast.error("Player name is required");
-                    if (step === 1 && !String(form.contactNumber ?? "").trim()) {
-                      return toast.error("Contact number is required");
-                    }
-                    setStep(step + 1);
-                  }}
-                  className="btn-primary flex-1 py-3 flex items-center justify-center gap-2"
-                >
-                  Continue <ChevronRight size={16} />
-                </button>
-              ) : (
-                <button
-                  onClick={handleSubmit}
-                  disabled={syncState !== "idle" && syncState !== "error"}
-                  className="btn-primary flex-1 py-3 flex items-center justify-center gap-2"
-                >
-                  {syncState === "syncing" && (
-                    <span className="flex items-center gap-2">
-                      <svg className="animate-spin w-4 h-4" viewBox="0 0 24 24" fill="none">
-                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4l3-3-3-3v4a8 8 0 00-8 8h4z" />
-                      </svg>
-                      Syncing Booking...
-                    </span>
-                  )}
-                  {syncState === "offline-saved" && (
-                    <span className="flex items-center gap-2">
-                      <Check size={16} /> Saved Offline — Will Sync Automatically
-                    </span>
-                  )}
-                  {syncState === "reconnecting" && (
-                    <span className="flex items-center gap-2">
-                      <svg className="animate-spin w-4 h-4" viewBox="0 0 24 24" fill="none">
-                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4l3-3-3-3v4a8 8 0 00-8 8h4z" />
-                      </svg>
-                      Syncing Pending Booking...
-                    </span>
-                  )}
-                  {syncState === "success" && (
-                    <span className="flex items-center gap-2">
-                      <Check size={16} /> Booking Synced Successfully
-                    </span>
-                  )}
-                  {syncState === "error" && (
-                    <span className="flex items-center gap-2">
-                      Booking Failed — Retry
-                    </span>
-                  )}
-                  {syncState === "idle" && (
-                    <><Check size={16} /> Confirm Booking</>
-                  )}
-                </button>
-              )}
-            </div>
-          </div>
-
-          {/* Summary Sidebar */}
-          <div className="space-y-4">
-            <div className="card p-5 sticky top-24">
-              <h3 className="text-white font-semibold mb-4 text-sm">Booking Summary</h3>
-
-              <div className="space-y-3 text-sm">
-                <div>
-                  <div className="text-slate-500 text-xs mb-1">Court</div>
-                  <div className="text-white font-medium">{court?.name ?? "—"}</div>
-                  {court && (
-                    <div className="flex gap-2 mt-1">
-                      <span
-                        className={`text-xs px-2 py-0.5 rounded-full ${
-                          court.type === "Indoor"
-                            ? "bg-blue-500/20 text-blue-400"
-                            : court.type === "Outdoor"
-                              ? "bg-orange-500/20 text-orange-400"
-                              : "bg-slate-500/20 text-slate-400"
-                        }`}
-                      >
-                        {court.type}
-                      </span>
-                    </div>
-                  )}
-                </div>
-
-                {form.date && (
-                  <div>
-                    <div className="text-slate-500 text-xs mb-1">Date & Time</div>
-                    <div className="text-white">{form.date}</div>
-                    <div className="text-green-400">{form.timeSlot || "Not selected"}</div>
-                    <div className="text-slate-400 text-xs">{form.duration} {form.duration === 1 ? "hour" : "hours"}</div>
-                  </div>
-                )}
-
-                <div>
-                  <div className="text-slate-500 text-xs mb-1">Players</div>
-                  <div className="text-white flex items-center gap-1">
-                    <Users size={13} /> {form.players}
-                  </div>
-                </div>
-
-                {form.playerName && (
-                  <div>
-                    <div className="text-slate-500 text-xs mb-1">Player Name</div>
-                    <div className="text-white">{form.playerName}</div>
-                  </div>
-                )}
-
-                {equipmentItems.length > 0 && (
-                  <div>
-                    <div className="text-slate-500 text-xs mb-1">Equipment</div>
-                    {equipmentItems.map((e) => (
-                      <div key={e.id} className="flex justify-between text-slate-300 text-xs gap-2">
-                        <span className="truncate">{e.name}</span>
-                        <span className="shrink-0">₱{getRentalItemPrice(e).toLocaleString()}</span>
+                    {appliedPromo && (
+                      <div className="flex items-center gap-2 mt-2 text-green-400 text-sm">
+                        <Check size={14} /> {appliedPromo.label} applied!
                       </div>
+                    )}
+                    <p className="text-slate-600 text-xs mt-2">Try: PICKLE10, NEWUSER, MEMBER20</p>
+                  </div>
+                </div>
+              )}
+
+              {/* Step 3 - Payment */}
+              {step === 3 && (
+                <div className="card p-6">
+                  <h3 className="text-white font-semibold mb-1 flex items-center gap-2">
+                    <Smartphone size={18} className="text-green-400" /> Payment
+                  </h3>
+                  <p className="text-slate-500 text-sm mb-5">Plan, method, and proof</p>
+
+                  <label className="label">Payment plan</label>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mb-6">
+                    {[
+                      { id: PLAN_FULL, label: "Full payment" },
+                      { id: PLAN_PARTIAL, label: "Down payment" },
+                      { id: PLAN_LATER, label: "Pay later" },
+                    ].map((p) => (
+                      <button
+                        key={p.id}
+                        type="button"
+                        onClick={() => selectPaymentPlan(p.id)}
+                        className={`rounded-xl border py-3 px-2 text-xs font-semibold transition-all ${form.paymentPlan === p.id
+                            ? "border-cyan-500 bg-cyan-500/15 text-cyan-300"
+                            : "border-slate-700 bg-slate-800/80 text-slate-400 hover:border-slate-600"
+                          }`}
+                      >
+                        {p.label}
+                      </button>
                     ))}
                   </div>
-                )}
-              </div>
 
-              <div className="border-t border-slate-800 mt-4 pt-4 space-y-2 text-sm">
-                <div className="flex justify-between text-slate-400">
-                  <span>Court ({form.duration}hr)</span>
-                  <span>₱{courtTotal}</span>
-                </div>
-                {equipmentTotal > 0 && (
-                  <div className="flex justify-between text-slate-400">
-                    <span>Equipment</span>
-                    <span>₱{equipmentTotal}</span>
-                  </div>
-                )}
-                {discount > 0 && (
-                  <div className="flex justify-between text-green-400">
-                    <span>Promo ({appliedPromo?.code})</span>
-                    <span>-₱{discount.toFixed(2)}</span>
-                  </div>
-                )}
-                <div className="flex justify-between text-white font-semibold text-base pt-2 border-t border-slate-800">
-                  <span>Total</span>
-                  <span className="text-green-400">₱{total.toFixed(2)}</span>
-                </div>
-              </div>
+                  {form.paymentPlan === PLAN_PARTIAL && (
+                    <div className="mb-6">
+                      <label className="label">Amount paying now *</label>
+                      <input
+                        type="text"
+                        inputMode="decimal"
+                        className="input-field"
+                        placeholder="0.00"
+                        value={amountPaidInput}
+                        onChange={(e) => setAmountPaidInput(e.target.value)}
+                      />
+                      <p className="text-slate-500 text-xs mt-1">
+                        Balance after: <strong className="text-amber-400">₱{remainingBalance.toFixed(2)}</strong>
+                      </p>
+                    </div>
+                  )}
 
-              {step === 3 && (
-                <div className="mt-4 space-y-2 text-xs border-t border-slate-800 pt-4">
-                  <div className="flex justify-between text-slate-400">
-                    <span>Paying now</span>
-                    <span className="text-white">₱{amountPaidNow.toFixed(2)}</span>
+                  <label className="label">Payment method</label>
+                  <div className="grid grid-cols-2 gap-3 mb-6">
+                    <button
+                      type="button"
+                      onClick={() => selectPaymentMethod(PAYMENT_GCASH)}
+                      className={`flex items-center justify-center gap-2 rounded-xl border py-3.5 px-3 text-sm font-semibold min-h-[48px] transition-all ${form.paymentMethod === PAYMENT_GCASH
+                          ? "border-green-500 bg-green-500/15 text-green-400"
+                          : "border-slate-700 bg-slate-800/80 text-slate-400"
+                        }`}
+                    >
+                      <Smartphone size={18} /> GCash
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => selectPaymentMethod(PAYMENT_CASH)}
+                      className={`flex items-center justify-center gap-2 rounded-xl border py-3.5 px-3 text-sm font-semibold min-h-[48px] transition-all ${form.paymentMethod === PAYMENT_CASH
+                          ? "border-amber-500 bg-amber-500/15 text-amber-400"
+                          : "border-slate-700 bg-slate-800/80 text-slate-400"
+                        }`}
+                    >
+                      <Banknote size={18} /> Cash
+                    </button>
                   </div>
-                  <div className="flex justify-between text-slate-400">
-                    <span>Balance</span>
-                    <span className="text-amber-400">₱{remainingBalance.toFixed(2)}</span>
+
+                  <div
+                    className={`transition-[max-height,opacity] duration-300 overflow-hidden ${form.paymentMethod === PAYMENT_GCASH ? "max-h-[2000px] opacity-100" : "max-h-0 opacity-0 pointer-events-none"
+                      }`}
+                    aria-hidden={form.paymentMethod !== PAYMENT_GCASH}
+                  >
+                    {form.paymentMethod === PAYMENT_GCASH && (
+                      <>
+                        <div className="bg-green-500/5 border border-green-500/20 rounded-xl p-5 mb-5">
+                          <div className="flex items-start gap-3">
+                            <AlertCircle size={18} className="text-green-400 mt-0.5 shrink-0" />
+                            <div className="text-sm">
+                              <p className="text-white font-medium mb-1">GCash instructions</p>
+                              {amountPaidNow <= 0 ? (
+                                <p className="text-slate-400">No GCash transfer needed for pay later.</p>
+                              ) : (
+                                <ol className="text-slate-400 space-y-1 list-decimal list-inside">
+                                  <li>Open GCash on your phone</li>
+                                  <li>
+                                    Send <strong className="text-green-400">₱{amountPaidNow.toFixed(2)}</strong> to:{" "}
+                                    <strong className="text-white">09XX-XXX-XXXX</strong>
+                                  </li>
+                                  <li>Account Name: <strong className="text-white">PickleZone Inc.</strong></li>
+                                  <li>Screenshot the receipt and upload below</li>
+                                </ol>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                        {amountPaidNow > 0 && (
+                          <>
+                            <label className="label">Upload GCash receipt *</label>
+                            <div
+                              role="button"
+                              tabIndex={0}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter" || e.key === " ") {
+                                  e.preventDefault();
+                                  fileInputRef.current?.click();
+                                }
+                              }}
+                              onClick={() => fileInputRef.current?.click()}
+                              className={`border-2 border-dashed rounded-xl p-8 text-center cursor-pointer ${paymentImgUrl ? "border-green-500 bg-green-500/5" : "border-slate-700 hover:border-slate-500"
+                                }`}
+                            >
+                              {paymentImgUrl ? (
+                                <div>
+                                  <img src={paymentImgUrl} alt="Receipt" className="max-h-40 mx-auto rounded-lg mb-3 object-contain" />
+                                  <p className="text-green-400 text-sm font-medium flex items-center justify-center gap-1">
+                                    <Check size={14} /> Receipt uploaded
+                                  </p>
+                                </div>
+                              ) : (
+                                <div>
+                                  <Upload size={32} className="text-slate-600 mx-auto mb-2" />
+                                  <p className="text-slate-400 text-sm">Upload GCash screenshot</p>
+                                </div>
+                              )}
+                              <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleFileChange} />
+                            </div>
+                            {paymentImgUrl && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setPaymentImg(null);
+                                  setPaymentImgUrl("");
+                                  if (fileInputRef.current) fileInputRef.current.value = "";
+                                }}
+                                className="mt-2 text-red-400 hover:text-red-300 text-xs flex items-center gap-1"
+                              >
+                                <X size={12} /> Remove image
+                              </button>
+                            )}
+                          </>
+                        )}
+                      </>
+                    )}
                   </div>
-                  <div className="flex justify-between text-slate-400">
-                    <span>Status</span>
-                    <span className="text-slate-200 capitalize">{customerPaymentStatus}</span>
+
+                  <div
+                    className={`transition-[max-height,opacity] duration-300 overflow-hidden ${form.paymentMethod === PAYMENT_CASH ? "max-h-[2000px] opacity-100" : "max-h-0 opacity-0 pointer-events-none"
+                      }`}
+                    aria-hidden={form.paymentMethod !== PAYMENT_CASH}
+                  >
+                    {form.paymentMethod === PAYMENT_CASH && (
+                      <div className="space-y-5">
+                        <div className="bg-amber-500/5 border border-amber-500/20 rounded-xl p-5">
+                          <p className="text-white font-medium text-sm mb-1">Cash</p>
+                          <p className="text-slate-300 text-sm">
+                            {form.paymentPlan === PLAN_LATER
+                              ? "You will pay in cash at the facility before play."
+                              : `Bring cash — amount due now: ₱${cashDueNow.toFixed(2)} (total booking ₱${total.toFixed(2)})`}
+                          </p>
+                        </div>
+                        {form.paymentPlan !== PLAN_LATER && (
+                          <div className="grid sm:grid-cols-2 gap-4">
+                            <div>
+                              <label className="label">Cash received *</label>
+                              <div className="relative">
+                                <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 text-sm"></span>
+                                <input
+                                  type="text"
+                                  inputMode="decimal"
+                                  className="input-field pl-8"
+                                  placeholder="0.00"
+                                  value={cashReceivedInput}
+                                  onChange={(e) => setCashReceivedInput(e.target.value)}
+                                />
+                              </div>
+                            </div>
+                            <div>
+                              <label className="label">Change</label>
+                              <div
+                                className={`input-field flex items-center min-h-[42px] cursor-default ${cashChangeUi.variant === "danger"
+                                    ? "text-red-400 border-red-500/30 bg-red-500/5"
+                                    : cashChangeUi.variant === "ok"
+                                      ? "text-emerald-400"
+                                      : "text-slate-500"
+                                  }`}
+                              >
+                                {cashChangeUi.text}
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 </div>
               )}
-              <div className="mt-4 p-3 bg-blue-500/10 border border-blue-500/20 rounded-xl">
-                <p className="text-blue-400 text-xs">
-                  {form.paymentPlan === PLAN_LATER
-                    ? "💡 Pay later: settle at the desk before your slot."
-                    : form.paymentMethod === PAYMENT_CASH
-                      ? "💡 Cash: pay at facility; booking stays pending until approved."
-                      : "💡 GCash: pending until staff confirms your transfer."}
-                </p>
+
+              {/* Nav Buttons */}
+              <div className="flex gap-3">
+                {step > 1 && (
+                  <button onClick={() => setStep(step - 1)} className="btn-secondary flex-1 py-3">
+                    ← Back
+                  </button>
+                )}
+                {step < 3 ? (
+                  <button
+                    onClick={() => {
+                      if (step === 1 && !form.timeSlot) return toast.error("Please select a time slot");
+                      if (step === 1 && !form.playerName) return toast.error("Player name is required");
+                      if (step === 1 && !String(form.contactNumber ?? "").trim()) {
+                        return toast.error("Contact number is required");
+                      }
+                      setStep(step + 1);
+                    }}
+                    className="btn-primary flex-1 py-3 flex items-center justify-center gap-2"
+                  >
+                    Continue <ChevronRight size={16} />
+                  </button>
+                ) : (
+                  <button
+                    onClick={handleSubmit}
+                    disabled={syncState !== "idle" && syncState !== "error"}
+                    className="btn-primary flex-1 py-3 flex items-center justify-center gap-2"
+                  >
+                    {syncState === "syncing" && (
+                      <span className="flex items-center gap-2">
+                        <svg className="animate-spin w-4 h-4" viewBox="0 0 24 24" fill="none">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4l3-3-3-3v4a8 8 0 00-8 8h4z" />
+                        </svg>
+                        Syncing Booking...
+                      </span>
+                    )}
+                    {syncState === "offline-saved" && (
+                      <span className="flex items-center gap-2">
+                        <Check size={16} /> Saved Offline — Will Sync Automatically
+                      </span>
+                    )}
+                    {syncState === "reconnecting" && (
+                      <span className="flex items-center gap-2">
+                        <svg className="animate-spin w-4 h-4" viewBox="0 0 24 24" fill="none">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4l3-3-3-3v4a8 8 0 00-8 8h4z" />
+                        </svg>
+                        Syncing Pending Booking...
+                      </span>
+                    )}
+                    {syncState === "success" && (
+                      <span className="flex items-center gap-2">
+                        <Check size={16} /> Booking Synced Successfully
+                      </span>
+                    )}
+                    {syncState === "error" && (
+                      <span className="flex items-center gap-2">
+                        Booking Failed — Retry
+                      </span>
+                    )}
+                    {syncState === "idle" && (
+                      <><Check size={16} /> Confirm Booking</>
+                    )}
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Summary Sidebar */}
+            <div className="space-y-4">
+              <div className="card p-5 sticky top-24">
+                <h3 className="text-white font-semibold mb-4 text-sm">Booking Summary</h3>
+
+                <div className="space-y-3 text-sm">
+                  <div>
+                    <div className="text-slate-500 text-xs mb-1">Court</div>
+                    <div className="text-white font-medium">{court?.name ?? "—"}</div>
+                    {court && (
+                      <div className="flex gap-2 mt-1">
+                        <span
+                          className={`text-xs px-2 py-0.5 rounded-full ${court.type === "Indoor"
+                              ? "bg-blue-500/20 text-blue-400"
+                              : court.type === "Outdoor"
+                                ? "bg-orange-500/20 text-orange-400"
+                                : "bg-slate-500/20 text-slate-400"
+                            }`}
+                        >
+                          {court.type}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+
+                  {form.date && (
+                    <div>
+                      <div className="text-slate-500 text-xs mb-1">Date & Time</div>
+                      <div className="text-white">{form.date}</div>
+                      <div className="text-green-400">{form.timeSlot || "Not selected"}</div>
+                      <div className="text-slate-400 text-xs">{form.duration} {form.duration === 1 ? "hour" : "hours"}</div>
+                    </div>
+                  )}
+
+                  <div>
+                    <div className="text-slate-500 text-xs mb-1">Players</div>
+                    <div className="text-white flex items-center gap-1">
+                      <Users size={13} /> {form.players}
+                    </div>
+                  </div>
+
+                  {form.playerName && (
+                    <div>
+                      <div className="text-slate-500 text-xs mb-1">Player Name</div>
+                      <div className="text-white">{form.playerName}</div>
+                    </div>
+                  )}
+
+                  {equipmentItems.length > 0 && (
+                    <div>
+                      <div className="text-slate-500 text-xs mb-1">Equipment</div>
+                      {equipmentItems.map((e) => (
+                        <div key={e.id} className="flex justify-between text-slate-300 text-xs gap-2">
+                          <span className="truncate">{e.name}</span>
+                          <span className="shrink-0">₱{getRentalItemPrice(e).toLocaleString()}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <div className="border-t border-slate-800 mt-4 pt-4 space-y-2 text-sm">
+                  <div className="flex justify-between text-slate-400">
+                    <span>Court ({form.duration}hr)</span>
+                    <span>₱{courtTotal}</span>
+                  </div>
+                  {equipmentTotal > 0 && (
+                    <div className="flex justify-between text-slate-400">
+                      <span>Equipment</span>
+                      <span>₱{equipmentTotal}</span>
+                    </div>
+                  )}
+                  {discount > 0 && (
+                    <div className="flex justify-between text-green-400">
+                      <span>Promo ({appliedPromo?.code})</span>
+                      <span>-₱{discount.toFixed(2)}</span>
+                    </div>
+                  )}
+                  <div className="flex justify-between text-white font-semibold text-base pt-2 border-t border-slate-800">
+                    <span>Total</span>
+                    <span className="text-green-400">₱{total.toFixed(2)}</span>
+                  </div>
+                </div>
+
+                {step === 3 && (
+                  <div className="mt-4 space-y-2 text-xs border-t border-slate-800 pt-4">
+                    <div className="flex justify-between text-slate-400">
+                      <span>Paying now</span>
+                      <span className="text-white">₱{amountPaidNow.toFixed(2)}</span>
+                    </div>
+                    <div className="flex justify-between text-slate-400">
+                      <span>Balance</span>
+                      <span className="text-amber-400">₱{remainingBalance.toFixed(2)}</span>
+                    </div>
+                    <div className="flex justify-between text-slate-400">
+                      <span>Status</span>
+                      <span className="text-slate-200 capitalize">{customerPaymentStatus}</span>
+                    </div>
+                  </div>
+                )}
+                <div className="mt-4 p-3 bg-blue-500/10 border border-blue-500/20 rounded-xl">
+                  <p className="text-blue-400 text-xs">
+                    {form.paymentPlan === PLAN_LATER
+                      ? "💡 Pay later: settle at the desk before your slot."
+                      : form.paymentMethod === PAYMENT_CASH
+                        ? "💡 Cash: pay at facility; booking stays pending until approved."
+                        : "💡 GCash: pending until staff confirms your transfer."}
+                  </p>
+                </div>
               </div>
             </div>
           </div>
         </div>
-      </div>
       </div>
     </div>
   );
