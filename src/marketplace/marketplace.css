@@ -1,0 +1,103 @@
+/* Marketplace — extends admin POS visual language */
+.mkp-page { max-width: 1280px; margin: 0 auto; }
+.mkp-grid-stores {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 1rem;
+}
+.mkp-store-card {
+  background: var(--ad-card, #151e2d);
+  border: 1px solid var(--ad-border, #334155);
+  border-radius: 12px;
+  padding: 1rem;
+  cursor: pointer;
+  transition: border-color 0.2s, transform 0.15s;
+  text-align: center;
+}
+.mkp-store-card:hover { border-color: #22d3ee; transform: translateY(-2px); }
+.mkp-store-card.closed { opacity: 0.55; pointer-events: none; }
+.mkp-store-logo {
+  width: 56px;
+  height: 56px;
+  border-radius: 12px;
+  object-fit: cover;
+  margin: 0 auto 0.5rem;
+  background: #0f172a;
+}
+.mkp-badge-open { background: #10b98133; color: #34d399; font-size: 0.65rem; padding: 2px 8px; border-radius: 999px; }
+.mkp-badge-closed { background: #64748b33; color: #94a3b8; font-size: 0.65rem; padding: 2px 8px; border-radius: 999px; }
+.mkp-product-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 0.75rem;
+}
+.mkp-cart-group {
+  border: 1px solid #334155;
+  border-radius: 10px;
+  padding: 0.75rem;
+  margin-bottom: 0.75rem;
+  background: #0f172a80;
+}
+.mkp-vendor-order-card {
+  border: 1px solid #334155;
+  border-radius: 12px;
+  padding: 1rem;
+  margin-bottom: 0.75rem;
+  background: #151e2d;
+}
+.mkp-skeleton {
+  background: linear-gradient(90deg, #1e293b 25%, #334155 50%, #1e293b 75%);
+  background-size: 200% 100%;
+  animation: mkp-shimmer 1.2s infinite;
+  border-radius: 8px;
+  min-height: 80px;
+}
+@keyframes mkp-shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+/* Food court admin POS — 3 column layout */
+.fc-pos-layout {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 1rem;
+  min-height: 70vh;
+}
+@media (min-width: 1100px) {
+  .fc-pos-layout {
+    grid-template-columns: minmax(220px, 1fr) minmax(280px, 1.2fr) minmax(240px, 1fr);
+  }
+}
+.fc-pos-col {
+  background: var(--ad-card, #151e2d);
+  border: 1px solid var(--ad-border, #334155);
+  border-radius: 12px;
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  min-height: 400px;
+}
+.fc-pos-heading {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: #e2e8f0;
+  margin-bottom: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.fc-pos-scroll {
+  flex: 1;
+  overflow-y: auto;
+  max-height: calc(100vh - 220px);
+}
+.fc-pos-order-card {
+  background: #0f172a;
+  border: 1px solid #334155;
+  border-radius: 10px;
+  padding: 0.75rem;
+  margin-bottom: 0.5rem;
+  transition: border-color 0.15s;
+}
+.fc-pos-order-card:hover { border-color: #475569; }
+.fc-pos-order-card--active { border-color: #22d3ee; background: #22d3ee10; }

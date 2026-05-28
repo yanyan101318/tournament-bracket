@@ -1,28 +1,14 @@
 import { useState, useEffect, useMemo, useCallback } from "react";
-import { useSearchParams, useNavigate } from "react-router-dom";
-import { collection, doc, getDocs, onSnapshot, query, where, orderBy, addDoc, updateDoc, serverTimestamp } from "firebase/firestore";
+import { useSearchParams } from "react-router-dom";
+import { collection, doc, getDoc, onSnapshot, query, where, orderBy, addDoc, updateDoc, serverTimestamp } from "firebase/firestore";
 import { db } from "../firebase";
 import { format } from "date-fns";
 import toast from "react-hot-toast";
-
-function parseTimeToDate(dateStr, timeStr) {
-  if (!timeStr) return new Date(0);
-  const parts = timeStr.split(' ');
-  if (parts.length !== 2) return new Date(0);
-  const time = parts[0];
-  const modifier = parts[1];
-  let [hours, minutes] = time.split(':');
-  if (hours === '12') {
-    hours = '00';
-  }
-  if (modifier === 'PM' || modifier === 'pm') {
-    hours = parseInt(hours, 10) + 12;
-  }
-  // format hours and minutes to 2 digits
-  const hh = String(hours).padStart(2, '0');
-  const mm = String(minutes).padStart(2, '0');
-  return new Date(`${dateStr}T${hh}:${mm}:00`);
-}
+import { Link } from "react-router-dom";
+import MarketplaceBrowse from "../marketplace/MarketplaceBrowse";
+import { FOODCOURT_PATH } from "../marketplace/constants";
+import { findActiveBookingForCourt } from "../lib/bookingSession";
+import { matchesBookerIdentity } from "../lib/bookerVerify";
 
 function productPrice(p) {
   const v = Number(p?.price ?? p?.salePrice ?? 0);
@@ -61,11 +47,22 @@ function OrderProductImage({ src, alt }) {
 
 export default function OrderPage() {
   const [searchParams] = useSearchParams();
-  const courtId = searchParams.get("courtId");
-  const navigate = useNavigate();
+  const courtIdParam =
+    searchParams.get("courtId") ||
+    searchParams.get("courtID") ||
+    searchParams.get("courtid") ||
+    searchParams.get("court") ||
+    searchParams.get("court_id") ||
+    searchParams.get("id");
+  const courtNameParam =
+    searchParams.get("courtName") ||
+    searchParams.get("courtname") ||
+    searchParams.get("court_name");
 
   const [booking, setBooking] = useState(null);
-  const [loadingBooking, setLoadingBooking] = useState(true);
+  const [loadingBooking, setLoadingBooking] = useState(Boolean(courtIdParam || courtNameParam));
+  const [bookingLoadError, setBookingLoadError] = useState(null);
+  const [courtName, setCourtName] = useState("");
 
   const [products, setProducts] = useState([]);
   const [loadingProducts, setLoadingProducts] = useState(true);
@@ -80,69 +77,120 @@ export default function OrderPage() {
   const [verifyInput, setVerifyInput] = useState("");
   const [verifyError, setVerifyError] = useState("");
   const [pendingOrders, setPendingOrders] = useState([]);
+  const [pendingApprovalCount, setPendingApprovalCount] = useState(0);
+  const [orderMode, setOrderMode] = useState("snacks");
+  const [marketplacePlaced, setMarketplacePlaced] = useState(false);
 
 
   useEffect(() => {
-    if (!courtId) {
+    if (!courtIdParam && !courtNameParam) {
       setLoadingBooking(false);
-      return;
+      return undefined;
     }
-    const loadBooking = async () => {
-      try {
-        const qBookings = query(collection(db, "bookings"), where("courtId", "==", courtId));
-        const snap = await getDocs(qBookings);
 
-        const now = new Date();
-        const todayStr = format(now, "yyyy-MM-dd");
+    setLoadingBooking(true);
+    setBookingLoadError(null);
 
-        let activeBooking = null;
+    const merged = new Map();
+    let courtLabel = courtNameParam || "";
+    let unsubById = () => {};
+    let unsubByName = () => {};
 
-        snap.forEach(docSnap => {
-          const b = docSnap.data();
-          if (b.status === "Approved" && b.date === todayStr) {
-            const startTime = parseTimeToDate(b.date, b.timeSlot);
-            const durationHours = Number(b.duration) || 1;
-            const endTime = new Date(startTime.getTime() + durationHours * 60 * 60 * 1000);
-
-            if (now >= startTime && now <= endTime) {
-              activeBooking = { id: docSnap.id, ...b };
-            }
-          }
-        });
-
-        if (activeBooking) {
-          setBooking(activeBooking);
-        }
-      } catch (err) {
-        console.error("Error loading session:", err);
-      } finally {
-        setLoadingBooking(false);
-      }
+    const apply = () => {
+      const active = findActiveBookingForCourt(
+        Array.from(merged.values()),
+        courtIdParam,
+        new Date(),
+        courtLabel
+      );
+      setBooking(active);
+      setLoadingBooking(false);
     };
-    loadBooking();
-  }, [courtId]);
+
+    const onBookingsSnap = (snap) => {
+      snap.docs.forEach((d) => merged.set(d.id, { id: d.id, ...d.data() }));
+      apply();
+    };
+
+    const onBookingsErr = (err) => {
+      console.error("Error loading court session:", err);
+      setBooking(null);
+      setBookingLoadError(err?.code === "permission-denied" ? "permission" : "unknown");
+      setLoadingBooking(false);
+    };
+
+    let cancelled = false;
+
+    (async () => {
+      if (courtIdParam) {
+        try {
+          const courtSnap = await getDoc(doc(db, "courts", courtIdParam));
+          if (cancelled) return;
+          if (courtSnap.exists()) {
+            courtLabel = courtSnap.data().name || courtLabel;
+            setCourtName(courtLabel);
+          }
+        } catch {
+          /* court doc optional */
+        }
+      }
+
+      if (courtNameParam && !courtLabel) {
+        courtLabel = courtNameParam;
+        setCourtName(courtNameParam);
+      }
+
+      if (cancelled) return;
+
+      if (courtIdParam) {
+        unsubById = onSnapshot(
+          query(collection(db, "bookings"), where("courtId", "==", courtIdParam)),
+          onBookingsSnap,
+          onBookingsErr
+        );
+      }
+
+      if (courtNameParam || courtLabel) {
+        const nameQuery = courtNameParam || courtLabel;
+        unsubByName = onSnapshot(
+          query(collection(db, "bookings"), where("courtName", "==", nameQuery)),
+          onBookingsSnap,
+          (err) => console.warn("bookings by courtName:", err)
+        );
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      unsubById();
+      unsubByName();
+    };
+  }, [courtIdParam, courtNameParam]);
 
   useEffect(() => {
-    if (!booking || !verifiedAsBooker) return;
-    const q = query(collection(db, "orders"), where("bookingId", "==", booking.id), where("status", "==", "awaiting_approval"));
-    const unsub = onSnapshot(q, (snap) => {
-      const docs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-      docs.sort((a, b) => (b.createdAt?.toMillis() || 0) - (a.createdAt?.toMillis() || 0));
-      setPendingOrders(docs);
-    });
+    if (!booking?.id) return undefined;
+    const q = query(collection(db, "orders"), where("bookingId", "==", booking.id));
+    const unsub = onSnapshot(
+      q,
+      (snap) => {
+        const awaiting = snap.docs
+          .map((d) => ({ id: d.id, ...d.data() }))
+          .filter((o) => o.status === "awaiting_approval");
+        awaiting.sort((a, b) => (b.createdAt?.toMillis() || 0) - (a.createdAt?.toMillis() || 0));
+        setPendingApprovalCount(awaiting.length);
+        if (verifiedAsBooker) setPendingOrders(awaiting);
+      },
+      (err) => console.error("Pending orders listener:", err)
+    );
     return () => unsub();
-  }, [booking, verifiedAsBooker]);
+  }, [booking?.id, verifiedAsBooker]);
 
   const handleVerify = () => {
-    const input = verifyInput.trim().toLowerCase();
-    const email = (booking.email || "").trim().toLowerCase();
-    const phone = (booking.contactNumber || "").trim().toLowerCase();
-    
-    if (input === email || input === phone) {
+    if (matchesBookerIdentity(verifyInput, booking)) {
       setVerifiedAsBooker(true);
       setVerifyError("");
     } else {
-      setVerifyError("Incorrect phone number or email.");
+      setVerifyError("Incorrect phone number or email used when booking.");
     }
   };
 
@@ -258,6 +306,7 @@ export default function OrderPage() {
         items: cartLines,
         totalAmount: cartTotal,
         status: "awaiting_approval",
+        placedByGuest: true,
         createdAt: serverTimestamp(),
       });
       setOrderPlaced(true);
@@ -270,7 +319,7 @@ export default function OrderPage() {
     }
   };
 
-  if (loadingBooking) {
+  if ((courtIdParam || courtNameParam) && loadingBooking) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-slate-950">
         <div className="w-8 h-8 border-4 border-cyan-500 border-t-transparent rounded-full animate-spin"></div>
@@ -278,7 +327,7 @@ export default function OrderPage() {
     );
   }
 
-  if (!booking) {
+  if ((courtIdParam || courtNameParam) && !booking) {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center bg-slate-950 p-6 text-center">
         <div className="w-16 h-16 bg-red-500/20 border-2 border-red-500 rounded-full flex items-center justify-center mb-4">
@@ -286,7 +335,9 @@ export default function OrderPage() {
         </div>
         <h1 className="text-2xl font-bold text-white mb-2">No Active Booking</h1>
         <p className="text-slate-400 max-w-sm">
-          There is no active approved booking for this court right now. Please order during your set time!
+          {bookingLoadError === "permission"
+            ? "Could not verify your court session. Ask staff to update Firestore rules, or sign in and try again."
+            : "There is no booking for this court today. Book a court first, then scan the QR again — you can order food any time on your booking day (pending or approved)."}
         </p>
       </div>
     );
@@ -300,7 +351,9 @@ export default function OrderPage() {
         </div>
         <h1 className="text-3xl font-bold text-white mb-2">Order Placed!</h1>
         <p className="text-slate-400 max-w-md mb-8">
-          Your order has been placed successfully. Please ask the person who booked the court to approve this order from their device so we can start preparing it!
+          Your order was sent to <strong className="text-white">{booking.playerName}</strong> for approval.
+          They can tap <strong className="text-cyan-400">Approve Orders</strong> on this page and confirm with their booking email or phone.
+          The kitchen will prepare it after approval.
         </p>
         <button
           onClick={() => setOrderPlaced(false)}
@@ -316,28 +369,86 @@ export default function OrderPage() {
     <div className="min-h-screen bg-slate-950 text-slate-200 pb-32">
       {/* Header */}
       <div className="sticky top-0 z-10 bg-slate-900/80 backdrop-blur-md border-b border-slate-800 p-4 shadow-lg">
-        <div className="max-w-xl mx-auto flex items-center justify-between">
+        <div className="max-w-xl mx-auto">
+          <div className="mb-3 rounded-xl border border-cyan-500/30 bg-cyan-500/10 px-3 py-2 text-xs text-cyan-100">
+            <strong className="text-cyan-300">Open to everyone</strong> — no login needed to order.
+            Court snacks require approval from <strong className="text-white">{booking.playerName}</strong> before the kitchen prepares them.
+          </div>
+          <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-xl font-bold text-white">Order Food & Drinks</h1>
+            <h1 className="text-xl font-bold text-white">Court ordering</h1>
             <p className="text-xs text-cyan-400 font-semibold uppercase tracking-wider">
-              {booking.courtName} • {booking.playerName}
+              {booking.courtName}
             </p>
           </div>
           <div className="flex gap-2 items-center">
             <button 
+              type="button"
               onClick={() => setShowApprovals(true)}
-              className="text-[10px] sm:text-xs bg-slate-800 text-cyan-400 hover:bg-slate-700 transition-colors border border-cyan-500/50 px-3 py-1.5 rounded-full font-bold uppercase tracking-wide"
+              className="relative text-[10px] sm:text-xs bg-slate-800 text-cyan-400 hover:bg-slate-700 transition-colors border border-cyan-500/50 px-3 py-1.5 rounded-full font-bold uppercase tracking-wide"
             >
-              Approve Orders
+              {booking.playerName ? `${booking.playerName.split(" ")[0]}'s approvals` : "Approve Orders"}
+              {pendingApprovalCount > 0 && (
+                <span className="absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] px-1 rounded-full bg-amber-500 text-slate-950 text-[10px] font-bold flex items-center justify-center">
+                  {pendingApprovalCount}
+                </span>
+              )}
             </button>
             <div className="w-10 h-10 bg-cyan-500/20 rounded-full flex items-center justify-center border border-cyan-500/50 shrink-0">
               <span className="material-symbols-outlined text-cyan-400">restaurant</span>
             </div>
           </div>
+          </div>
         </div>
       </div>
 
       <div className="max-w-xl mx-auto p-4">
+        <div className="flex gap-2 mb-4">
+          <button
+            type="button"
+            className={`flex-1 py-2 rounded-xl text-sm font-bold ${orderMode === "marketplace" ? "bg-cyan-500 text-slate-950" : "bg-slate-800 text-slate-400"}`}
+            onClick={() => setOrderMode("marketplace")}
+          >
+            Food court stalls
+          </button>
+          <button
+            type="button"
+            className={`flex-1 py-2 rounded-xl text-sm font-bold ${orderMode === "snacks" ? "bg-cyan-500 text-slate-950" : "bg-slate-800 text-slate-400"}`}
+            onClick={() => setOrderMode("snacks")}
+          >
+            Court snacks (needs approval)
+          </button>
+        </div>
+
+        {orderMode === "marketplace" ? (
+          <div className="mb-4 rounded-xl border border-cyan-500/30 bg-cyan-500/10 p-3 text-sm text-cyan-100">
+            All food court stalls are on one menu.{" "}
+            <Link to={FOODCOURT_PATH} className="font-bold text-cyan-300 underline">
+              Open food court →
+            </Link>
+          </div>
+        ) : null}
+        {orderMode === "marketplace" ? (
+          marketplacePlaced ? (
+            <div className="text-center py-12">
+              <p className="text-emerald-400 font-semibold mb-4">Marketplace order placed!</p>
+              <p className="text-slate-400 text-sm mb-6">Pay at the admin counter. Vendors prepare after payment (no court booker approval needed).</p>
+              <button
+                type="button"
+                className="px-6 py-3 bg-cyan-500 text-slate-950 font-bold rounded-xl"
+                onClick={() => setMarketplacePlaced(false)}
+              >
+                Order more
+              </button>
+            </div>
+          ) : (
+            <MarketplaceBrowse
+              booking={booking}
+              onOrderPlaced={() => setMarketplacePlaced(true)}
+            />
+          )
+        ) : (
+          <>
         {/* Categories */}
         <div className="flex overflow-x-auto gap-2 pb-4 hide-scrollbar">
           {categories.map((c) => (
@@ -397,10 +508,12 @@ export default function OrderPage() {
             })}
           </div>
         )}
+          </>
+        )}
       </div>
 
       {/* Floating Checkout Bar */}
-      {cartLines.length > 0 && (
+      {orderMode === "snacks" && cartLines.length > 0 && (
         <div className="fixed bottom-0 left-0 right-0 p-4 bg-gradient-to-t from-slate-950 via-slate-950 to-transparent pointer-events-none z-20">
           <div className="max-w-xl mx-auto bg-slate-800 border border-slate-700 shadow-2xl rounded-2xl p-4 pointer-events-auto">
             <div className="flex justify-between items-center mb-3">
@@ -417,7 +530,7 @@ export default function OrderPage() {
               ) : (
                 <>
                   <span className="material-symbols-outlined text-[20px]">shopping_cart_checkout</span>
-                  Place Order
+                  Send for approval
                 </>
               )}
             </button>
@@ -444,9 +557,9 @@ export default function OrderPage() {
                 <div className="w-16 h-16 bg-cyan-500/20 rounded-full flex items-center justify-center mx-auto mb-4 border border-cyan-500/30">
                   <span className="material-symbols-outlined text-cyan-400 text-3xl">shield_person</span>
                 </div>
-                <h3 className="text-center text-xl font-bold text-white mb-2">Verify Identity</h3>
+                <h3 className="text-center text-xl font-bold text-white mb-2">Court booker only</h3>
                 <p className="text-center text-slate-400 text-sm mb-6">
-                  Only the person who booked the court ({booking.playerName}) can approve orders. Enter your email or phone number to continue.
+                  Guests can place orders without logging in. Only <strong className="text-white">{booking.playerName}</strong> can approve them — enter the email or phone number from the booking.
                 </p>
                 <div className="space-y-4 max-w-sm mx-auto w-full">
                   <input

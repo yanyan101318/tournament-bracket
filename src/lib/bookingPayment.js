@@ -38,3 +38,38 @@ export function resolveCustomerPayStatus(plan, total, amountPaid) {
   if (a + 1e-9 >= t) return CUSTOMER_PAY_PAID;
   return CUSTOMER_PAY_PARTIAL;
 }
+
+/**
+ * Resolve display/save totals when booking and payment docs disagree (e.g. booking totalAmount 0).
+ * @param {Record<string, unknown>|null|undefined} booking
+ * @param {Record<string, unknown>|null|undefined} linkedPayment
+ */
+export function resolveBookingTotals(booking, linkedPayment) {
+  const payTotal = roundMoney(
+    Number(linkedPayment?.totalAmount) ||
+      Number(linkedPayment?.amount) ||
+      0
+  );
+
+  let total = roundMoney(
+    Number(booking?.totalAmount) ||
+      Number(booking?.amount) ||
+      0
+  );
+  if (total <= 0 && payTotal > 0) total = payTotal;
+  if (total <= 0) {
+    const hourly = Number(booking?.hourlyRate) || 0;
+    const dur = Number(booking?.duration) || 1;
+    if (hourly > 0) total = roundMoney(hourly * dur);
+  }
+
+  const paid = roundMoney(
+    Number(booking?.amountPaid) ||
+      Number(linkedPayment?.amountPaid) ||
+      0
+  );
+
+  const remaining = resolveRemaining(total, paid);
+
+  return { total, paid, remaining };
+}

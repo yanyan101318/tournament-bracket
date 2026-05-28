@@ -255,12 +255,13 @@ export default function CourtManager() {
             </div>
             <div id="print-section" className="p-8 bg-white rounded-xl my-4 flex flex-col items-center">
               <div className="print-text print-title hidden">{qrCourt.name}</div>
-              <QRCodeCanvas id="court-qr-canvas" value={`${window.location.origin}/order?courtId=${qrCourt.id}`} size={256} />
+              <QRCodeCanvas id="court-qr-canvas" value={`${window.location.origin}/foodcourt?courtId=${qrCourt.id}`} size={256} />
               <div className="print-text print-subtitle hidden">Scan to Order</div>
             </div>
             <p className="text-sm text-slate-400 text-center px-4 mb-4">
               Print this QR code and place it at {qrCourt.name}.<br/>
-              Players can scan it to order food and drinks during their booked time.
+              Anyone can scan to order during an active booking — no login required.<br/>
+              Court snacks need approval from whoever booked the court before the kitchen prepares them.
             </p>
             <div className="ad-modal-footer w-full flex justify-center">
               <button className="ad-btn ad-btn-primary" onClick={() => {

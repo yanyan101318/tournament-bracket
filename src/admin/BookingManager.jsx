@@ -14,8 +14,12 @@ import {
 } from "firebase/firestore";
 import { db } from "../firebase";
 import { canExtendBooking, EXTEND_OPTIONS } from "../lib/bookingSlots";
-import { roundMoney } from "../lib/bookingMoney";
-import { resolveCustomerPayStatus, PLAN_FULL } from "../lib/bookingPayment";
+import { roundMoney, parseCashAmount } from "../lib/bookingMoney";
+import {
+  resolveCustomerPayStatus,
+  resolveBookingTotals,
+  PLAN_FULL,
+} from "../lib/bookingPayment";
 import toast from "react-hot-toast";
 import { useOfflineSync } from "../hooks/useOfflineSync";
 import ReceiptPrint from "../components/ReceiptPrint";
@@ -64,6 +68,8 @@ export default function BookingManager() {
   const [zoomImage, setZoomImage] = useState(null);
   const [rejectReasonModal, setRejectReasonModal] = useState({ open: false, reason: "" });
   const [resolvedContact, setResolvedContact] = useState(null);
+  const [paidEditDraft, setPaidEditDraft] = useState("");
+  const [savingPaid, setSavingPaid] = useState(false);
   const { wrapSync } = useOfflineSync();
 
   useEffect(() => {
@@ -130,7 +136,13 @@ export default function BookingManager() {
     const q = query(collection(db, "payments"), where("bookingId", "==", selected.id));
     const unsub = onSnapshot(q, (snap) => {
       if (!snap.empty) {
-        setLinkedPayment({ id: snap.docs[0].id, ...snap.docs[0].data() });
+        const sorted = [...snap.docs].sort((a, b) => {
+          const ta = a.data().createdAt?.toMillis?.() ?? 0;
+          const tb = b.data().createdAt?.toMillis?.() ?? 0;
+          return tb - ta;
+        });
+        const latest = sorted[0];
+        setLinkedPayment({ id: latest.id, ...latest.data() });
       } else {
         setLinkedPayment(null);
       }
@@ -140,6 +152,113 @@ export default function BookingManager() {
     });
     return () => unsub();
   }, [selected]);
+
+  const selectedMoney = selected
+    ? resolveBookingTotals(selected, linkedPayment)
+    : { total: 0, paid: 0, remaining: 0 };
+
+  useEffect(() => {
+    if (!selected) {
+      setPaidEditDraft("");
+      return;
+    }
+    const { paid, total } = resolveBookingTotals(selected, linkedPayment);
+    const gcashHint =
+      String(selected.paymentMethod || linkedPayment?.method || "").toLowerCase() === "gcash";
+    const payRecordAmt = roundMoney(Number(linkedPayment?.amount) || 0);
+    const suggested =
+      paid > 0 ? paid : gcashHint && payRecordAmt > 0 ? payRecordAmt : paid;
+    setPaidEditDraft(suggested > 0 ? suggested.toFixed(2) : "");
+  }, [
+    selected,
+    linkedPayment,
+    selected?.id,
+    selected?.amountPaid,
+    selected?.totalAmount,
+    linkedPayment?.id,
+    linkedPayment?.amount,
+    linkedPayment?.amountPaid,
+  ]);
+
+  async function savePaidAmount() {
+    if (!selected) return;
+    const paid = roundMoney(parseCashAmount(paidEditDraft));
+    if (!Number.isFinite(paid) || paid < 0) {
+      toast.error("Enter a valid amount received.");
+      return;
+    }
+
+    let { total } = resolveBookingTotals(selected, linkedPayment);
+    if (total <= 0 && paid > 0) total = paid;
+    if (total <= 0) {
+      toast.error("Set court pricing or payment total before recording amount paid.");
+      return;
+    }
+    if (paid > total) {
+      toast.error("Amount paid cannot exceed the booking total.");
+      return;
+    }
+
+    const remaining = roundMoney(Math.max(0, total - paid));
+    const payStatus = resolveCustomerPayStatus(
+      selected.paymentPlan || PLAN_FULL,
+      total,
+      paid
+    );
+
+    setSavingPaid(true);
+    try {
+      const batch = writeBatch(db);
+      batch.update(doc(db, "bookings", selected.id), {
+        totalAmount: total,
+        amountPaid: paid,
+        remainingBalance: remaining,
+        customerPaymentStatus: payStatus,
+        updatedAt: Timestamp.now(),
+      });
+
+      const linkedSnap = await getDocs(
+        query(collection(db, "payments"), where("bookingId", "==", selected.id))
+      );
+      linkedSnap.forEach((d) => {
+        const data = d.data();
+        const patch = {
+          totalAmount: total,
+          amountPaid: paid,
+          remainingBalance: remaining,
+          customerPaymentStatus: payStatus,
+          updatedAt: serverTimestamp(),
+        };
+        if (data.paymentKind !== "balance") {
+          patch.amount = total;
+        }
+        batch.update(d.ref, patch);
+      });
+
+      await wrapSync(batch.commit(), {
+        successMsg: "Payment amount saved.",
+        offlineMsg: "Payment amount queued for sync",
+        errorMsg: "Could not save payment amount.",
+      });
+
+      setSelected((s) =>
+        s && s.id === selected.id
+          ? {
+              ...s,
+              totalAmount: total,
+              amountPaid: paid,
+              remainingBalance: remaining,
+              customerPaymentStatus: payStatus,
+            }
+          : s
+      );
+      setPaidEditDraft(paid.toFixed(2));
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setSavingPaid(false);
+    }
+  }
 
   function applyDatePreset(preset) {
     const today = new Date();
@@ -877,9 +996,36 @@ export default function BookingManager() {
                     <div className="ad-detail-row"><span>Date</span><strong>{selected.date??'—'}</strong></div>
                     <div className="ad-detail-row"><span>Time Slot</span><strong>{selected.timeSlot??'—'}</strong></div>
                     <div className="ad-detail-row"><span>Duration</span><strong>{selected.duration ?? "—"} hr</strong></div>
-                    <div className="ad-detail-row"><span>Total</span><strong>₱{roundMoney(Number(selected.totalAmount)||0).toFixed(2)}</strong></div>
-                    <div className="ad-detail-row"><span>Paid</span><strong>₱{roundMoney(Number(selected.amountPaid)||0).toFixed(2)}</strong></div>
-                    <div className="ad-detail-row"><span>Balance</span><strong>₱{deriveRemainingBalance(selected).toFixed(2)}</strong></div>
+                    <div className="ad-detail-row"><span>Total</span><strong>₱{selectedMoney.total.toFixed(2)}</strong></div>
+                    <div className="ad-detail-row ad-detail-row-edit">
+                      <span>Paid (GCash / cash received)</span>
+                      <div className="flex flex-wrap items-center gap-2 mt-1">
+                        <input
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          className="ad-search text-sm py-2 w-32"
+                          value={paidEditDraft}
+                          onChange={(e) => setPaidEditDraft(e.target.value)}
+                          placeholder="0.00"
+                          aria-label="Amount paid"
+                        />
+                        <button
+                          type="button"
+                          className="ad-btn ad-btn-sm ad-btn-success"
+                          disabled={savingPaid || acting === selected.id}
+                          onClick={savePaidAmount}
+                        >
+                          {savingPaid ? "Saving…" : "Save"}
+                        </button>
+                      </div>
+                    </div>
+                    <div className="ad-detail-row"><span>Balance</span><strong>₱{selectedMoney.remaining.toFixed(2)}</strong></div>
+                    {Number(selected.totalAmount) === 0 && selectedMoney.total > 0 && (
+                      <p className="col-span-2 text-xs text-amber-400/90">
+                        Total was missing on the booking — showing ₱{selectedMoney.total.toFixed(2)} from the payment record. Save paid amount to sync both records.
+                      </p>
+                    )}
                     <div className="ad-detail-row"><span>Booking Status</span>
                       <span className={`ad-badge ad-badge-${STATUS_COLORS[selected.status]??"pending"} mt-1 w-fit`}>{selected.status??"Pending"}</span>
                     </div>
@@ -960,7 +1106,7 @@ export default function BookingManager() {
                   >
                     Print Receipt
                   </button>
-                  {deriveRemainingBalance(selected) > 0 && selected.status !== "Cancelled" && (
+                  {selectedMoney.remaining > 0 && selected.status !== "Cancelled" && (
                     <button
                       className="ad-btn ad-btn-sm ad-btn-success"
                       disabled={acting===selected.id}

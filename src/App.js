@@ -22,17 +22,23 @@ import InventoryPage        from "./admin/InventoryPage";
 import PaddleStackingPage   from "./admin/PaddleStackingPage";
 import PosPage              from "./admin/PosPage";
 import SalesHistoryPage     from "./admin/SalesHistoryPage";
+import VendorStoresPage     from "./admin/vendors/VendorStoresPage";
+import VendorSettlementsPage from "./admin/vendors/VendorSettlementsPage";
+import VendorPortal         from "./vendor/VendorPortal";
 
 // Tournament public pages (scorer / viewer)
 import ScorerPage from "./pages/ScorerPage";
 import ViewerPage from "./pages/ViewerPage";
 import OrderPage from "./pages/OrderPage";
+import FoodCourtPage from "./pages/FoodCourtPage";
+import CustomerAccountPage from "./pages/CustomerAccountPage";
 import PaddleViewerPage from "./pages/PaddleViewerPage";
 import PaddleScorerPage from "./pages/PaddleScorerPage";
 
 import "./App.css";
 import "./admin/admin.css";
 import "./auth/auth.css";
+import "./marketplace/marketplace.css";
 import { Toaster } from "react-hot-toast";
 
 export default function App() {
@@ -54,7 +60,10 @@ export default function App() {
           {/* ── PUBLIC TOURNAMENT VIEWS & ORDERING ── */}
           <Route path="/bracket/:tournamentId"           element={<ViewerPage/>}/>
           <Route path="/score/:tournamentId/:matchId"    element={<ScorerPage/>}/>
+          <Route path="/foodcourt"                       element={<FoodCourtPage/>}/>
           <Route path="/order"                           element={<OrderPage/>}/>
+          <Route path="/account"                         element={<CustomerAccountPage/>}/>
+          <Route path="/vendor/store/:storeId"          element={<VendorPortal/>}/>
           <Route path="/paddle-viewer"                   element={<PaddleViewerPage/>}/>
           <Route path="/paddle-score/:courtId?"          element={<PaddleScorerPage/>}/>
 
@@ -73,6 +82,8 @@ export default function App() {
             <Route path="crm"           element={<CrmPage/>}/>
             <Route path="pos"           element={<PosPage/>}/>
             <Route path="sales-history" element={<SalesHistoryPage/>}/>
+            <Route path="vendors"         element={<VendorStoresPage/>}/>
+            <Route path="vendor-settlements" element={<VendorSettlementsPage/>}/>
             <Route path="tournament"    element={<AdminTournament/>}/>
             <Route path="paddle-stack"  element={<PaddleStackingPage/>}/>
             <Route path="analytics"     element={<Analytics/>}/>
@@ -84,9 +95,7 @@ export default function App() {
           {/* ── CUSTOMER PANEL (placeholder for Phase 2) ── */}
           <Route path="/user/*" element={
             <ProtectedRoute requiredRole="customer">
-              <div style={{padding:"2rem",color:"#fff"}}>
-                Customer panel coming soon. Phase 2! 🚀
-              </div>
+              <CustomerAccountPage />
             </ProtectedRoute>
           }/>
 

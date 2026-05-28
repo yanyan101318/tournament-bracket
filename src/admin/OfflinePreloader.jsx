@@ -14,6 +14,8 @@ const COLLECTIONS_TO_CACHE = [
   { name: "customers", orderField: "updatedAt", orderDirection: "desc", fetchLimit: 500 },
   { name: "announcements", orderField: "createdAt", orderDirection: "desc", fetchLimit: 100 },
   { name: "courts", orderField: "createdAt", orderDirection: "desc", fetchLimit: 100 },
+  { name: "stores", orderField: "name", orderDirection: "asc", fetchLimit: 100 },
+  { name: "customerOrders", orderField: "createdAt", orderDirection: "desc", fetchLimit: 200 },
   { name: "paddleMatchHistory", orderField: "endedAt", orderDirection: "desc", fetchLimit: 200 },
   { name: "users", orderField: null, orderDirection: null, fetchLimit: 500 },
 ];

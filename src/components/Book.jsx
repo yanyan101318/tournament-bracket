@@ -81,7 +81,13 @@ export default function Book() {
   const location = useLocation();
   const adminMode = location.pathname.startsWith("/admin/");
   const [searchParams] = useSearchParams();
-  const courtParam = searchParams.get("court");
+  const courtParam =
+    searchParams.get("court") ||
+    searchParams.get("courtId") ||
+    searchParams.get("courtID") ||
+    searchParams.get("courtid") ||
+    searchParams.get("court_id") ||
+    searchParams.get("id");
   const fileInputRef = useRef();
 
   /** Rental add-ons: prefer `price`, fall back to legacy inventory `pricePerHour`. */
@@ -415,6 +421,9 @@ export default function Book() {
 
   const handleSubmit = async () => {
     if (!court) return toast.error("Please select a court");
+    if (!court.price || court.price <= 0) {
+      return toast.error("This court has no hourly rate set. Ask admin to update court pricing.");
+    }
     if (!form.timeSlot) return toast.error("Please select a time slot");
     if (!form.playerName) return toast.error("Player name is required");
     if (!String(form.contactNumber ?? "").trim()) {
@@ -928,13 +937,15 @@ export default function Book() {
                     <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
                       {TIME_SLOTS.map((slot) => {
                         const inPast = isSlotInPast(form.date, slot);
+                        const exactBooked = dayBookings.some((b) => b.timeSlot === slot);
                         const isTaken = !inPast && !isSlotStartAvailableForDuration(
                           slot,
                           form.duration,
                           dayBookings
                         );
+                        const isOverlap = isTaken && !exactBooked;
                         const isUnavailable = inPast || isTaken;
-                        
+
                         return (
                           <button
                             key={slot}
@@ -947,11 +958,15 @@ export default function Book() {
                               }`}
                           >
                             {slot}
-                            {isTaken && <div className="text-[10px] leading-tight mt-0.5">Booked</div>}
+                            {exactBooked && <div className="text-[10px] leading-tight mt-0.5">Booked</div>}
+                            {isOverlap && !exactBooked && <div className="text-[10px] leading-tight mt-0.5">Conflicts</div>}
                             {inPast && <div className="text-[10px] leading-tight mt-0.5">Not Available</div>}
                           </button>
                         );
                       })}
+                    </div>
+                    <div className="text-xs text-slate-500 mt-3">
+                      <p>Booked = exact slot start is reserved. Conflicts = this start time would overlap an existing booking for the selected duration.</p>
                     </div>
                   </div>
 

@@ -35,16 +35,23 @@ const SALES_DROPDOWN_LINKS = [
   { to: "/admin/sales-history", label: "Transactions and receipts" },
 ];
 
+const MARKETPLACE_DROPDOWN_LINKS = [
+  { to: "/admin/vendors", label: "Vendor stores" },
+  { to: "/admin/vendor-settlements", label: "Settlements" },
+];
+
 export default function AdminLayout() {
   const { profile, role, loading, logout } = useAuth();
   const [showLogout, setShowLogout] = useState(false);
   const [tournamentOpen, setTournamentOpen] = useState(false);
   const [bookingOpen, setBookingOpen] = useState(false);
   const [salesOpen, setSalesOpen] = useState(false);
+  const [marketplaceOpen, setMarketplaceOpen] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const tournamentRef = useRef(null);
   const bookingRef = useRef(null);
   const salesRef = useRef(null);
+  const marketplaceRef = useRef(null);
   const notifRef = useRef(null);
   const notifFirstSnapshot = useRef(true);
   const notifOpenRef = useRef(false);
@@ -89,11 +96,15 @@ export default function AdminLayout() {
   const salesNavActive =
     location.pathname === "/admin/pos" ||
     location.pathname === "/admin/sales-history";
+  const marketplaceNavActive = MARKETPLACE_DROPDOWN_LINKS.some(
+    (s) => location.pathname === s.to
+  );
 
   useEffect(() => {
     setTournamentOpen(false);
     setBookingOpen(false);
     setSalesOpen(false);
+    setMarketplaceOpen(false);
     setMobileMenuOpen(false);
   }, [location.pathname]);
 
@@ -125,6 +136,9 @@ export default function AdminLayout() {
       }
       if (salesRef.current && !salesRef.current.contains(e.target)) {
         setSalesOpen(false);
+      }
+      if (marketplaceRef.current && !marketplaceRef.current.contains(e.target)) {
+        setMarketplaceOpen(false);
       }
       if (notifRef.current && !notifRef.current.contains(e.target)) {
         setNotifOpen(false);
@@ -301,6 +315,7 @@ export default function AdminLayout() {
                   onClick={() => {
                     setBookingOpen(false);
                     setTournamentOpen(false);
+                    setMarketplaceOpen(false);
                     setSalesOpen((o) => !o);
                   }}
                   aria-expanded={salesOpen}
@@ -324,6 +339,49 @@ export default function AdminLayout() {
                             }`
                           }
                           onClick={() => setSalesOpen(false)}
+                        >
+                          {item.label}
+                        </NavLink>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+              <div className="relative" ref={marketplaceRef}>
+                <button
+                  type="button"
+                  className={`text-xs font-medium transition-colors flex items-center gap-0.5 ${
+                    marketplaceNavActive || marketplaceOpen
+                      ? "nav-link-active text-cyan-400"
+                      : "nav-link text-slate-400 hover:text-cyan-400"
+                  }`}
+                  onClick={() => {
+                    setBookingOpen(false);
+                    setTournamentOpen(false);
+                    setSalesOpen(false);
+                    setMarketplaceOpen((o) => !o);
+                  }}
+                  aria-expanded={marketplaceOpen}
+                  aria-haspopup="true"
+                >
+                  Food court
+                  <span className="material-symbols-outlined text-[18px] leading-none">
+                    {marketplaceOpen ? "expand_less" : "expand_more"}
+                  </span>
+                </button>
+                {marketplaceOpen && (
+                  <div className="sales-dropdown-panel absolute left-0 top-full mt-1 py-2 px-2 min-w-[220px] rounded-xl border border-slate-700/90 bg-[#151e2d] shadow-lg z-[60]">
+                    <div className="space-y-0.5">
+                      {MARKETPLACE_DROPDOWN_LINKS.map((item) => (
+                        <NavLink
+                          key={item.to}
+                          to={item.to}
+                          className={({ isActive }) =>
+                            `sales-dropdown-item block rounded-lg px-3 py-2.5 text-xs font-semibold transition-colors ${
+                              isActive ? "bg-slate-800/90 text-cyan-400" : "text-slate-200 hover:bg-slate-800/70"
+                            }`
+                          }
+                          onClick={() => setMarketplaceOpen(false)}
                         >
                           {item.label}
                         </NavLink>
@@ -573,6 +631,24 @@ export default function AdminLayout() {
               <p className="px-2 pt-4 pb-2 text-[10px] font-bold text-slate-500 uppercase tracking-widest">Sales</p>
               <ul className="space-y-0.5">
                 {SALES_DROPDOWN_LINKS.map((item) => (
+                  <li key={item.to}>
+                    <NavLink
+                      to={item.to}
+                      onClick={() => setMobileMenuOpen(false)}
+                      className={({ isActive }) =>
+                        `block rounded-lg px-3 py-3 text-sm font-medium ${
+                          isActive ? "bg-slate-800 text-cyan-400" : "text-slate-200 hover:bg-slate-800/80"
+                        }`
+                      }
+                    >
+                      {item.label}
+                    </NavLink>
+                  </li>
+                ))}
+              </ul>
+              <p className="px-2 pt-4 pb-2 text-[10px] font-bold text-slate-500 uppercase tracking-widest">Food court</p>
+              <ul className="space-y-0.5">
+                {MARKETPLACE_DROPDOWN_LINKS.map((item) => (
                   <li key={item.to}>
                     <NavLink
                       to={item.to}

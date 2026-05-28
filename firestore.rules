@@ -1,0 +1,91 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return isSignedIn()
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+    }
+
+    // Admin full access to marketplace collections
+    match /stores/{storeId} {
+      allow read: if true;
+      allow write: if isAdmin();
+      match /products/{productId} {
+        allow read: if true;
+        // Vendor portal uses token gate in app; lock down with Cloud Functions for production hardening
+        allow write: if isAdmin() || resource == null || resource.data.storeId == storeId;
+      }
+      match /vendorOrders/{orderId} {
+        allow read: if true;
+        allow update: if isAdmin() || true;
+        allow create: if true;
+      }
+    }
+
+    match /vendorTokens/{tokenId} {
+      allow read, write: if isAdmin();
+    }
+
+    match /customerOrders/{orderId} {
+      allow read: if true;
+      allow create: if true;
+      allow update: if isAdmin() || (isSignedIn() && request.auth.uid == resource.data.userId);
+      allow delete: if isAdmin();
+    }
+
+    match /foodCourtConfig/{docId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /customerBalances/{userId} {
+      allow read: if isSignedIn() && request.auth.uid == userId;
+      allow write: if isAdmin() || (isSignedIn() && request.auth.uid == userId);
+    }
+
+    match /customerBalancePayments/{paymentId} {
+      allow read: if isAdmin() || (isSignedIn() && resource.data.userId == request.auth.uid);
+      allow create, write: if isAdmin();
+    }
+
+    match /vendorPayouts/{payoutId} {
+      allow read, write: if isAdmin();
+    }
+
+    match /storeAnalytics/{storeId} {
+      allow read, write: if isAdmin();
+    }
+
+    match /courts/{courtId} {
+      allow read: if true;
+      allow write: if isSignedIn();
+    }
+
+    // Court QR ordering — guests scan without signing in
+    match /bookings/{bookingId} {
+      allow read: if true;
+      allow create, update: if isSignedIn();
+      allow delete: if isAdmin();
+    }
+
+    match /products/{productId} {
+      allow read: if true;
+      allow write: if isSignedIn();
+    }
+
+    match /orders/{orderId} {
+      allow read, create, update: if true;
+      allow delete: if isAdmin();
+    }
+
+    // Legacy collections — tighten in production; keep permissive for existing app behavior
+    match /{document=**} {
+      allow read, write: if isSignedIn();
+    }
+  }
+}
