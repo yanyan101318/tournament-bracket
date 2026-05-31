@@ -33,6 +33,31 @@ function formatPeso(v) {
   return `₱${Number(v || 0).toFixed(2)}`;
 }
 
+function copyTextToClipboard(text) {
+  if (!text) return;
+  if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+    navigator.clipboard.writeText(text).catch(() => {
+      const textarea = document.createElement("textarea");
+      textarea.value = text;
+      textarea.style.position = "fixed";
+      textarea.style.opacity = "0";
+      document.body.appendChild(textarea);
+      textarea.select();
+      document.execCommand("copy");
+      document.body.removeChild(textarea);
+    });
+    return;
+  }
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.style.position = "fixed";
+  textarea.style.opacity = "0";
+  document.body.appendChild(textarea);
+  textarea.select();
+  document.execCommand("copy");
+  document.body.removeChild(textarea);
+}
+
 export default function VendorStoresPage() {
   const [stores, setStores] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -162,6 +187,11 @@ export default function VendorStoresPage() {
     setProductsModal({ store, products });
   }
 
+  const facilityUrl = foodCourtPublicUrl();
+  const vendorPortalLink = vendorLinkModal
+    ? vendorLinkModal.portalUrl || vendorPortalUrl(vendorLinkModal.id, vendorLinkModal.token || "")
+    : "";
+
   if (loading) {
     return (
       <div className="ad-loading">
@@ -246,16 +276,16 @@ export default function VendorStoresPage() {
         <div className="ad-modal-backdrop" onClick={() => setFacilityQrOpen(false)}>
           <div className="ad-modal max-w-xl text-center" onClick={(e) => e.stopPropagation()}>
             <h3 className="text-lg font-bold text-white mb-2">Facility Food Court QR</h3>
-            <p className="text-sm text-slate-400 mb-4 break-all">{foodCourtPublicUrl()}</p>
+            <p className="text-sm text-slate-400 mb-4 break-all">{facilityUrl}</p>
             <div className="inline-block p-5 bg-white rounded-xl">
-              <QRCodeCanvas id="facility-foodcourt-qr" value={foodCourtPublicUrl()} size={260} />
+              <QRCodeCanvas id="facility-foodcourt-qr" value={facilityUrl} size={260} />
             </div>
             <div className="flex gap-2 justify-center mt-4 flex-wrap">
               <button
                 type="button"
                 className="ad-btn ad-btn-outline ad-btn-sm"
                 onClick={() => {
-                  navigator.clipboard?.writeText(foodCourtPublicUrl());
+                  copyTextToClipboard(facilityUrl);
                   toast.success("Link copied");
                 }}
               >
@@ -295,11 +325,11 @@ export default function VendorStoresPage() {
             <p className="text-xs text-slate-500 mb-2 px-4">
               Kitchen staff only. Customers use the facility food court QR.
             </p>
-            <p className="text-xs text-slate-400 mb-4 break-all px-4">{vendorLinkModal.portalUrl}</p>
+            <p className="text-xs text-slate-400 mb-4 break-all px-4">{vendorPortalLink}</p>
             <div className="inline-block p-4 bg-white rounded-xl">
               <QRCodeCanvas
                 id={`vendor-qr-${vendorLinkModal.id}`}
-                value={vendorLinkModal.portalUrl || vendorPortalUrl(vendorLinkModal.id, vendorLinkModal.token || "")}
+                value={vendorPortalLink}
                 size={200}
                 level="M"
               />
@@ -309,7 +339,7 @@ export default function VendorStoresPage() {
                 type="button"
                 className="ad-btn ad-btn-outline ad-btn-sm"
                 onClick={() => {
-                  navigator.clipboard?.writeText(vendorLinkModal.portalUrl || "");
+                  copyTextToClipboard(vendorPortalLink);
                   toast.success("Link copied");
                 }}
               >

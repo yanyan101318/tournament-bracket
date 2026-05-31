@@ -67,6 +67,10 @@ export default function VendorPortal() {
   const [productForm, setProductForm] = useState(BLANK_PRODUCT);
   const [deleteConfirm, setDeleteConfirm] = useState(null);
   const [orderPage, setOrderPage] = useState(1);
+  const [historyPage, setHistoryPage] = useState(1);
+  const [historySearch, setHistorySearch] = useState("");
+  const [historyFrom, setHistoryFrom] = useState("");
+  const [historyTo, setHistoryTo] = useState("");
   const prevOrderCount = useRef(0);
 
   useEffect(() => {
@@ -143,9 +147,38 @@ export default function VendorPortal() {
   const store = auth.store;
   const todayPending = orders.filter((o) => o.status === VENDOR_ORDER_STATUS.PENDING).length;
   const ORDER_PAGE_SIZE = 10;
-  const orderTotalPages = Math.max(1, Math.ceil(orders.length / ORDER_PAGE_SIZE));
+
+  // Active orders exclude completed ones (completed moved to History)
+  const activeOrders = orders.filter((o) => o.status !== VENDOR_ORDER_STATUS.COMPLETED);
+  const orderTotalPages = Math.max(1, Math.ceil(activeOrders.length / ORDER_PAGE_SIZE));
   const orderPageIndex = Math.min(orderPage, orderTotalPages);
-  const orderRows = orders.slice((orderPageIndex - 1) * ORDER_PAGE_SIZE, orderPageIndex * ORDER_PAGE_SIZE);
+  const orderRows = activeOrders.slice((orderPageIndex - 1) * ORDER_PAGE_SIZE, orderPageIndex * ORDER_PAGE_SIZE);
+
+  // History (completed orders) listing
+  const historyOrdersAll = orders
+    .filter((o) => o.status === VENDOR_ORDER_STATUS.COMPLETED)
+    .sort((a, b) => (b.createdAt?.toMillis?.() || 0) - (a.createdAt?.toMillis?.() || 0));
+
+  const historyFiltered = historyOrdersAll.filter((o) => {
+    const q = historySearch.trim().toLowerCase();
+    if (q) {
+      if (!((o.customerName || "").toLowerCase().includes(q) || (o.id || "").toLowerCase().includes(q))) return false;
+    }
+    if (historyFrom) {
+      const d = o.createdAt?.toDate ? o.createdAt.toDate() : null;
+      if (!d || d < new Date(historyFrom)) return false;
+    }
+    if (historyTo) {
+      const d = o.createdAt?.toDate ? o.createdAt.toDate() : null;
+      // include entire day for 'to' by adding 1 day
+      if (!d || d > new Date(new Date(historyTo).setHours(23, 59, 59, 999))) return false;
+    }
+    return true;
+  });
+
+  const historyTotalPages = Math.max(1, Math.ceil(historyFiltered.length / ORDER_PAGE_SIZE));
+  const historyPageIndex = Math.min(historyPage, historyTotalPages);
+  const historyRows = historyFiltered.slice((historyPageIndex - 1) * ORDER_PAGE_SIZE, historyPageIndex * ORDER_PAGE_SIZE);
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-200">
@@ -158,7 +191,7 @@ export default function VendorPortal() {
           </div>
         </div>
         <div className="max-w-3xl mx-auto flex gap-2 mt-3">
-          {["dashboard", "orders", "products"].map((t) => (
+          {["dashboard", "orders", "history", "products"].map((t) => (
             <button
               key={t}
               type="button"
@@ -198,63 +231,74 @@ export default function VendorPortal() {
 
         {tab === "orders" && (
           <div className="space-y-3">
-            {orders.length === 0 && (
-              <p className="text-center text-slate-500 py-12">No orders yet.</p>
+            {activeOrders.length === 0 && (
+              <p className="text-center text-slate-500 py-12">No active orders.</p>
             )}
             {orderRows.map((order) => (
-              <div key={order.id} className="mkp-vendor-order-card">
-                <div className="flex justify-between items-start mb-2">
-                  <div>
-                    <div className="text-xs text-slate-500">#{order.id.slice(0, 6).toUpperCase()}</div>
-                    <div className="font-bold text-white">{order.courtName}</div>
-                    <div className="text-sm text-slate-400">{order.customerName}</div>
+              <div key={order.id} className="mkp-vendor-order-card p-3 bg-slate-900 border border-slate-800 rounded-xl">
+                <div className="flex flex-col sm:flex-row gap-3">
+                  <div className="flex-1">
+                    <div className="flex justify-between items-start mb-2">
+                      <div>
+                        <div className="text-xs text-slate-500">#{order.id.slice(0, 6).toUpperCase()}</div>
+                        <div className="font-bold text-white">{order.courtName}</div>
+                        <div className="text-sm text-slate-400">{order.customerName}</div>
+                      </div>
+                      <span
+                        className={`text-[10px] font-bold uppercase px-2 py-1 rounded ${
+                          order.paymentBadge === "PAID"
+                            ? "bg-emerald-500/20 text-emerald-400"
+                            : order.paymentBadge === "ACCOUNT_CHARGE"
+                              ? "bg-violet-500/20 text-violet-300"
+                              : "bg-amber-500/20 text-amber-400"
+                        }`}
+                      >
+                        {order.paymentBadge || (order.paymentStatus === "paid" ? "PAID" : "PENDING")}
+                      </span>
+                    </div>
+
+                    <div className="text-xs text-slate-500 mb-2">
+                      {order.createdAt?.toDate
+                        ? format(order.createdAt.toDate(), "MMM d, h:mm a")
+                        : "—"}
+                    </div>
+                    <ul className="text-sm space-y-1 mb-2">
+                      {(order.items || []).map((it, i) => (
+                        <li key={i} className="flex justify-between">
+                          <span>{it.quantity}× {it.name}</span>
+                          <span>₱{roundMoney(it.lineTotal).toFixed(2)}</span>
+                        </li>
+                      ))}
+                    </ul>
+                    {order.specialNotes && (
+                      <p className="text-xs text-amber-200/80 mb-2">Note: {order.specialNotes}</p>
+                    )}
+                    <div className="text-sm font-semibold text-cyan-400 mb-2">
+                      {VENDOR_ORDER_STATUS_LABELS[order.status] || order.status}
+                    </div>
                   </div>
-                  <span
-                    className={`text-[10px] font-bold uppercase px-2 py-1 rounded ${
-                      order.paymentBadge === "PAID"
-                        ? "bg-emerald-500/20 text-emerald-400"
-                        : order.paymentBadge === "ACCOUNT_CHARGE"
-                          ? "bg-violet-500/20 text-violet-300"
-                          : "bg-amber-500/20 text-amber-400"
-                    }`}
-                  >
-                    {order.paymentBadge || (order.paymentStatus === "paid" ? "PAID" : "PENDING")}
-                  </span>
-                </div>
-                <div className="text-xs text-slate-500 mb-2">
-                  {order.createdAt?.toDate
-                    ? format(order.createdAt.toDate(), "MMM d, h:mm a")
-                    : "—"}
-                </div>
-                <ul className="text-sm space-y-1 mb-2">
-                  {(order.items || []).map((it, i) => (
-                    <li key={i} className="flex justify-between">
-                      <span>{it.quantity}× {it.name}</span>
-                      <span>₱{roundMoney(it.lineTotal).toFixed(2)}</span>
-                    </li>
-                  ))}
-                </ul>
-                {order.specialNotes && (
-                  <p className="text-xs text-amber-200/80 mb-2">Note: {order.specialNotes}</p>
-                )}
-                <div className="text-sm font-semibold text-cyan-400 mb-2">
-                  {VENDOR_ORDER_STATUS_LABELS[order.status] || order.status}
-                </div>
-                <div className="flex flex-wrap gap-1">
-                  {STATUS_FLOW.map((st) => (
-                    <button
-                      key={st}
-                      type="button"
-                      disabled={order.status === st}
-                      className="text-[10px] px-2 py-1 rounded bg-slate-800 hover:bg-cyan-500/20 disabled:opacity-40"
-                      onClick={() => updateVendorOrderStatus(storeId, order.id, st).then(() => toast.success("Status updated"))}
-                    >
-                      {VENDOR_ORDER_STATUS_LABELS[st]}
-                    </button>
-                  ))}
+
+                  {/* Actions sidebar: vertical */}
+                  <div className="w-full sm:w-44 flex-shrink-0 flex flex-col items-stretch gap-2">
+                    {(() => {
+                      const visibleStatuses = STATUS_FLOW.filter((st) => st !== VENDOR_ORDER_STATUS.ACCEPTED && st !== VENDOR_ORDER_STATUS.READY);
+                      return visibleStatuses.map((st) => (
+                        <button
+                          key={st}
+                          type="button"
+                          disabled={order.status === st}
+                          className="text-sm px-3 py-2 rounded-lg bg-slate-800 hover:bg-cyan-500/10 disabled:opacity-40 text-left"
+                          onClick={() => updateVendorOrderStatus(storeId, order.id, st).then(() => toast.success("Status updated"))}
+                        >
+                          {VENDOR_ORDER_STATUS_LABELS[st]}
+                        </button>
+                      ));
+                    })()}
+                  </div>
                 </div>
               </div>
             ))}
+
             {orderTotalPages > 1 && (
               <div className="flex justify-end items-center gap-2 mt-4">
                 <button
@@ -276,6 +320,61 @@ export default function VendorPortal() {
                 >
                   Next
                 </button>
+              </div>
+            )}
+          </div>
+        )}
+
+        {tab === "history" && (
+          <div className="space-y-3">
+            <div className="flex flex-col sm:flex-row gap-2 items-center">
+              <input
+                type="search"
+                placeholder="Search order number or customer"
+                className="flex-1 bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-white text-sm"
+                value={historySearch}
+                onChange={(e) => { setHistorySearch(e.target.value); setHistoryPage(1); }}
+              />
+              <input type="date" className="bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-white text-sm" value={historyFrom} onChange={(e) => { setHistoryFrom(e.target.value); setHistoryPage(1); }} />
+              <input type="date" className="bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-white text-sm" value={historyTo} onChange={(e) => { setHistoryTo(e.target.value); setHistoryPage(1); }} />
+            </div>
+
+            {historyFiltered.length === 0 && (
+              <p className="text-center text-slate-500 py-8">No completed orders found.</p>
+            )}
+
+            {historyRows.map((order) => (
+              <div key={order.id} className="bg-slate-900 border border-slate-800 rounded-xl p-3">
+                <div className="flex justify-between items-start mb-2">
+                  <div>
+                    <div className="text-xs text-slate-500">#{order.id.slice(0, 6).toUpperCase()}</div>
+                    <div className="font-bold text-white">{order.customerName}</div>
+                    <div className="text-sm text-slate-400">{order.storeName || order.courtName}</div>
+                  </div>
+                  <div className="text-xs text-slate-500 text-right">
+                    {order.createdAt?.toDate ? format(order.createdAt.toDate(), "MMM d, yyyy h:mm a") : "—"}
+                  </div>
+                </div>
+                <ul className="text-sm space-y-1 mb-2">
+                  {(order.items || []).map((it, i) => (
+                    <li key={i} className="flex justify-between">
+                      <span>{it.quantity}× {it.name}</span>
+                      <span>₱{roundMoney(it.lineTotal).toFixed(2)}</span>
+                    </li>
+                  ))}
+                </ul>
+                <div className="flex justify-between items-center text-sm text-slate-400">
+                  <div>Total: ₱{(order.subtotal || order.totalAmount || 0).toFixed ? (order.subtotal || order.totalAmount || 0).toFixed(2) : order.subtotal}</div>
+                  <div className="text-xs font-semibold text-cyan-400">{VENDOR_ORDER_STATUS_LABELS[order.status] || order.status}</div>
+                </div>
+              </div>
+            ))}
+
+            {historyTotalPages > 1 && (
+              <div className="flex justify-end items-center gap-2 mt-4">
+                <button type="button" className="px-3 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-50" disabled={historyPageIndex <= 1} onClick={() => setHistoryPage((p) => Math.max(1, p - 1))}>Previous</button>
+                <span className="text-xs text-slate-400">Page {historyPageIndex} of {historyTotalPages}</span>
+                <button type="button" className="px-3 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-50" disabled={historyPageIndex >= historyTotalPages} onClick={() => setHistoryPage((p) => Math.min(historyTotalPages, p + 1))}>Next</button>
               </div>
             )}
           </div>

@@ -4,6 +4,7 @@ import {
   updateDoc,
   writeBatch,
   getDocs,
+  getDoc,
   query,
   orderBy,
   onSnapshot,
@@ -376,6 +377,11 @@ export async function payCustomerOrderAtPos({
 }
 
 export async function updateVendorOrderStatus(storeId, vendorOrderId, status) {
+  const vendorRef = doc(vendorOrdersCollection(storeId), vendorOrderId);
+  // fetch current order to avoid double-adjusting stock
+  const snap = await getDoc(vendorRef);
+  const existing = snap.exists() ? snap.data() : {};
+
   const payload = {
     status,
     updatedAt: serverTimestamp(),
@@ -383,7 +389,24 @@ export async function updateVendorOrderStatus(storeId, vendorOrderId, status) {
   if (status === VENDOR_ORDER_STATUS.COMPLETED) {
     payload.completedAt = serverTimestamp();
   }
-  await updateDoc(doc(vendorOrdersCollection(storeId), vendorOrderId), payload);
+
+  // If completing and stock has not been adjusted yet, decrement inventory
+  if (status === VENDOR_ORDER_STATUS.COMPLETED && !existing.stockAdjusted) {
+    const batch = writeBatch(db);
+    for (const item of existing.items || []) {
+      if (item.productId && item.quantity) {
+        batch.update(doc(storeProductsCollection(storeId), item.productId), {
+          stock: increment(-Math.floor(Number(item.quantity) || 0)),
+        });
+      }
+    }
+    // mark vendor order as stockAdjusted as part of the same batch
+    batch.update(vendorRef, { ...payload, stockAdjusted: true });
+    await batch.commit();
+    return;
+  }
+
+  await updateDoc(vendorRef, payload);
 }
 
 export async function markVendorOrderTransferred(storeId, vendorOrderId) {

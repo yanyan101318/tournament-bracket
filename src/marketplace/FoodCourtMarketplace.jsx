@@ -125,8 +125,8 @@ export default function FoodCourtMarketplace({ user, profile, booking, onOrderPl
     [cartGroups]
   );
 
-  const serviceFee = useMemo(() => roundMoney(subtotal * PLATFORM_SERVICE_FEE_RATE), [subtotal]);
-  const grandTotal = useMemo(() => roundMoney(subtotal + serviceFee), [subtotal, serviceFee]);
+  const serviceFee = 0;
+  const grandTotal = subtotal;
 
   const addToCart = useCallback((storeId, product) => {
     if (stores.find((s) => s.id === storeId)?.status === STORE_STATUS.CLOSED) {
@@ -345,6 +345,8 @@ export default function FoodCourtMarketplace({ user, profile, booking, onOrderPl
               <div className="p-2 flex-1">
                 <div className="font-semibold text-white text-sm line-clamp-2">{p.name}</div>
                 <div className="text-emerald-400 text-sm font-mono mt-1">₱{price.toFixed(2)}</div>
+                <div className="text-cyan-400 text-xs mt-2 font-semibold">Stock Left: {stock}</div>
+                {stock <= 5 && stock > 0 && <div className="text-amber-400 text-[10px] mt-1">Only {stock} left!</div>}
               </div>
               {inCart > 0 ? (
                 <div className="p-2 border-t border-slate-800 flex items-center justify-between gap-1">

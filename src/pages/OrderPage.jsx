@@ -485,6 +485,7 @@ export default function OrderPage() {
                     <div className="text-xs text-slate-500 font-semibold mb-1 uppercase">{p.category || "General"}</div>
                     <div className="font-bold text-white leading-tight mb-2 line-clamp-2">{p.name || "Unnamed"}</div>
                     <div className="text-emerald-400 font-mono font-semibold">₱{price.toFixed(2)}</div>
+                    <div className="text-slate-400 text-xs mt-1">Stock Left: {stock}</div>
                     {stock <= 5 && stock > 0 && <div className="text-[10px] text-amber-500 mt-1">Only {stock} left!</div>}
                   </div>
 
