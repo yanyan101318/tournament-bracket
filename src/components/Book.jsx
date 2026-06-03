@@ -36,6 +36,7 @@ import {
 import { upsertCustomerAfterBooking } from "../lib/crm";
 import BookingReceipt from "./BookingReceipt";
 import ReceiptPrint from "./ReceiptPrint";
+import { sendBookingSMS } from "../lib/smsService";
 
 function isSlotInPast(dateStr, timeStr) {
   if (!dateStr || !timeStr) return false;
@@ -594,6 +595,15 @@ export default function Book() {
         onSuccess: () => setStep(4),
         onOfflineSuccess: () => setTimeout(() => setStep(4), 1000)
       });
+
+      if (adminMode && String(form.contactNumber).trim()) {
+        const smsMsg = "RANAW PICKLEBALL COURT: Your booking has been CONFIRMED. Please arrive on your scheduled time. Thank you for choosing RANAW PICKLEBALL COURT.";
+        try {
+          await sendBookingSMS(bookingRef.id, String(form.contactNumber).trim(), smsMsg);
+        } catch (e) {
+          console.error("Failed to send admin booking SMS:", e);
+        }
+      }
 
       const paymentMethodLabel = form.paymentMethod === PAYMENT_CASH ? "Cash" : "GCash";
       const paymentPlanLabel =

@@ -15,6 +15,7 @@ import {
 import { getStoreSalesSummary } from "../services/marketplace/settlementService";
 import { VENDOR_ORDER_STATUS, VENDOR_ORDER_STATUS_LABELS } from "../marketplace/constants";
 import { roundMoney } from "../lib/bookingMoney";
+import { Pencil, Trash2, Image as ImageIcon } from "lucide-react";
 import "../marketplace/marketplace.css";
 
 const BLANK_PRODUCT = {
@@ -398,10 +399,10 @@ export default function VendorPortal() {
                   <div className="font-semibold text-white text-sm">{p.name}</div>
                   <div className="text-emerald-400 text-sm">₱{Number(p.price || 0).toFixed(2)}</div>
                   <div className="text-[10px] text-slate-500 mt-1">Stock: {p.stock ?? 0}</div>
-                  <div className="flex gap-1 mt-2">
+                  <div className="flex gap-2 mt-3">
                     <button
                       type="button"
-                      className="text-xs text-cyan-400"
+                      className="p-1.5 rounded-lg bg-cyan-500/10 text-cyan-400 hover:bg-cyan-500/20 transition-colors"
                       onClick={() => {
                         setProductForm({
                           name: p.name || "",
@@ -416,15 +417,17 @@ export default function VendorPortal() {
                         });
                         setProductModal({ mode: "edit", product: p });
                       }}
+                      title="Edit"
                     >
-                      Edit
+                      <Pencil size={16} />
                     </button>
                     <button
                       type="button"
-                      className="text-xs text-red-400"
+                      className="p-1.5 rounded-lg bg-red-500/10 text-red-400 hover:bg-red-500/20 transition-colors"
                       onClick={() => setDeleteConfirm(p)}
+                      title="Delete"
                     >
-                      Delete
+                      <Trash2 size={16} />
                     </button>
                   </div>
                 </div>
@@ -479,7 +482,23 @@ export default function VendorPortal() {
               <input type="number" step="0.01" className="bg-slate-950 border border-slate-700 rounded px-3 py-2 text-white text-sm" placeholder="Price" value={productForm.price} onChange={(e) => setProductForm({ ...productForm, price: e.target.value })} required />
               <input type="number" className="bg-slate-950 border border-slate-700 rounded px-3 py-2 text-white text-sm" placeholder="Stock" value={productForm.stock} onChange={(e) => setProductForm({ ...productForm, stock: e.target.value })} />
             </div>
-            <input type="file" accept="image/*" onChange={(e) => setProductForm({ ...productForm, imageFile: e.target.files?.[0] || null })} />
+            
+            <div className="flex items-center gap-3">
+              {productForm.imageFile ? (
+                <img src={URL.createObjectURL(productForm.imageFile)} alt="Preview" className="w-16 h-16 object-cover rounded-lg bg-slate-800" />
+              ) : productForm.existingImage ? (
+                <img src={productForm.existingImage} alt="Existing" className="w-16 h-16 object-cover rounded-lg bg-slate-800" />
+              ) : (
+                <div className="w-16 h-16 flex items-center justify-center rounded-lg bg-slate-800 text-slate-500">
+                  <ImageIcon size={20} />
+                </div>
+              )}
+              <div className="flex-1">
+                <input type="file" accept="image/*" onChange={(e) => setProductForm({ ...productForm, imageFile: e.target.files?.[0] || null })} className="w-full text-sm text-slate-300 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-slate-800 file:text-slate-300 hover:file:bg-slate-700" />
+                <p className="text-[10px] text-slate-500 mt-1">Browser security prevents showing the filename of an existing image.</p>
+              </div>
+            </div>
+
             <label className="flex items-center gap-2 text-sm text-slate-300">
               <input type="checkbox" checked={productForm.available} onChange={(e) => setProductForm({ ...productForm, available: e.target.checked })} />
               Available

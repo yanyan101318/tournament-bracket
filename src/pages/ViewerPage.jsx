@@ -115,6 +115,8 @@ function getCourtLabel(match, slotNum) {
   return String(slotNum);
 }
 
+// Removed getNextMatchForCourt as we now use nextGrid logic
+
 export default function ViewerPage() {
   const { tournamentId } = useParams();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -176,6 +178,43 @@ export default function ViewerPage() {
   const timeStr      = new Date().toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"});
 
   const courtGrid = buildCourtGrid(allMatches);
+  
+  // Compute upcoming matches that are not currently displayed
+  const currentMatchIds = new Set(Object.values(courtGrid).filter(Boolean).map(m => m.matchId));
+  const allUpcoming = allMatches
+    .filter(m => !m.winner && !currentMatchIds.has(m.matchId))
+    .sort((a, b) => {
+      const pA = matchDisplayPriority(a);
+      const pB = matchDisplayPriority(b);
+      if (pA !== pB) return pA - pB;
+      if (a.round !== b.round) return (a.round || 99) - (b.round || 99);
+      return String(a.matchId).localeCompare(String(b.matchId));
+    });
+
+  // Build nextGrid mapping 1..6 to the next match
+  const nextGrid = {};
+  const usedNextIds = new Set();
+  
+  for (let n = 1; n <= 6; n++) {
+    const currentMatch = courtGrid[n];
+    const courtIdentifier = currentMatch?.courtNumber || n;
+    const assignedNext = allUpcoming.find(m => !usedNextIds.has(m.matchId) && String(m.courtNumber) === String(courtIdentifier));
+    if (assignedNext) {
+      nextGrid[n] = assignedNext;
+      usedNextIds.add(assignedNext.matchId);
+    }
+  }
+  
+  for (let n = 1; n <= 6; n++) {
+    if (!nextGrid[n]) {
+      const nextAvail = allUpcoming.find(m => !usedNextIds.has(m.matchId) && !m.courtNumber);
+      if (nextAvail) {
+        nextGrid[n] = nextAvail;
+        usedNextIds.add(nextAvail.matchId);
+      }
+    }
+  }
+
   const focusedMatch = focusedMatchId
     ? allMatches.find(m => m.matchId === focusedMatchId)
     : null;
@@ -184,6 +223,7 @@ export default function ViewerPage() {
     : null;
 
   if (focusedMatch) {
+    const nextMatch = nextGrid[focusedSlot || 1] || null;
     return (
       <div className="vp2-page led-page led-page-focus">
         <div className="led-focus-view">
@@ -193,6 +233,7 @@ export default function ViewerPage() {
           <LEDCourtCard
             courtNum={focusedSlot || 1}
             match={focusedMatch}
+            nextMatch={nextMatch}
             format={info?.format}
             isFlashing={flashId === focusedMatch.matchId}
             zoomed
@@ -208,11 +249,13 @@ export default function ViewerPage() {
         <div className="led-grid">
           {[1, 2, 3, 4, 5, 6].map((courtNum) => {
             const match = courtGrid[courtNum] || null;
+            const nextMatch = nextGrid[courtNum] || null;
             return (
               <LEDCourtCard
                 key={courtNum}
                 courtNum={courtNum}
                 match={match}
+                nextMatch={nextMatch}
                 format={info?.format}
                 isFlashing={match && flashId === match.matchId}
                 onSelect={match ? () => openFocus(match.matchId) : undefined}
@@ -225,7 +268,7 @@ export default function ViewerPage() {
   );
 }
 
-function LEDCourtCard({ courtNum, match, format, isFlashing, onSelect, zoomed = false }) {
+function LEDCourtCard({ courtNum, match, nextMatch, format, isFlashing, onSelect, zoomed = false }) {
   const courtLabel = match ? getCourtLabel(match, courtNum) : String(courtNum);
   const hasAssignedCourt = !!(match?.courtNumber);
 
@@ -246,11 +289,6 @@ function LEDCourtCard({ courtNum, match, format, isFlashing, onSelect, zoomed = 
   const isPending = !teamA || !teamB;
   const isFinished = !!winner;
   const isLive = !isPending && !isFinished;
-
-  function initials(n) {
-    if (!n) return "?";
-    return n.split(" ").map(w => w[0]).join("").slice(0, 2).toUpperCase();
-  }
 
   const currentSet = sets.length > 0 ? sets[sets.length - 1] : null;
   const displayScoreA = isLive
@@ -280,7 +318,6 @@ function LEDCourtCard({ courtNum, match, format, isFlashing, onSelect, zoomed = 
 
       <div className="led-card-center">
         <div className="led-team-col">
-          <div className="led-team-badge led-badge-a">{initials(teamA)}</div>
           <div className="led-team-name">{teamA || "TBD"}</div>
         </div>
 
@@ -298,14 +335,22 @@ function LEDCourtCard({ courtNum, match, format, isFlashing, onSelect, zoomed = 
         </div>
 
         <div className="led-team-col">
-          <div className="led-team-badge led-badge-b">{initials(teamB)}</div>
           <div className="led-team-name">{teamB || "TBD"}</div>
         </div>
       </div>
 
-      <div className="led-card-bottom">
-        {onSelect && (
-          <span className="led-tap-hint"></span>
+      <div className="led-card-bottom p-0 flex flex-col justify-end">
+        {nextMatch ? (
+          <div className="w-full text-center py-3 px-3 bg-[#0a0f18]/60 border-t border-slate-700/50">
+            <span className="text-sm text-cyan-400 font-bold uppercase tracking-widest block mb-1">Up Next</span>
+            <span className="text-lg text-white font-bold truncate block">
+              {nextMatch.teamA || "TBD"} <span className="text-slate-500 mx-2 text-sm font-normal">vs</span> {nextMatch.teamB || "TBD"}
+            </span>
+          </div>
+        ) : (
+          <div className="w-full text-center py-3 px-3 bg-[#0a0f18]/60 border-t border-slate-700/50">
+            <span className="text-sm text-slate-500 italic block">No upcoming matches</span>
+          </div>
         )}
       </div>
     </div>

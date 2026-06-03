@@ -17,6 +17,7 @@ const BOOKING_SUBLINKS = [
   { to: "/admin/bookings",    label: "Bookings"      },
   { to: "/admin/new-booking", label: "New booking"  },
   { to: "/admin/crm",        label: "CRM"           },
+  { to: "/admin/memberships", label: "Memberships"   },
 ];
 
 const TOURNAMENT_SUBLINKS = [

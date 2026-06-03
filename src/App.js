@@ -14,6 +14,7 @@ import CourtManager         from "./admin/CourtManager";
 import BookingManager       from "./admin/BookingManager";
 import Analytics            from "./admin/Analytics";
 import CrmPage               from "./admin/CrmPage";
+import MembershipRequests    from "./admin/MembershipRequests";
 import AnnouncementManager  from "./admin/AnnouncementManager";
 import AdminTournament      from "./admin/AdminTournament";
 import AdminSchedule        from "./admin/AdminSchedule";
@@ -80,6 +81,7 @@ export default function App() {
             <Route path="courts"        element={<CourtManager/>}/>
             <Route path="bookings"      element={<BookingManager/>}/>
             <Route path="crm"           element={<CrmPage/>}/>
+            <Route path="memberships"   element={<MembershipRequests/>}/>
             <Route path="pos"           element={<PosPage/>}/>
             <Route path="sales-history" element={<SalesHistoryPage/>}/>
             <Route path="vendors"         element={<VendorStoresPage/>}/>
