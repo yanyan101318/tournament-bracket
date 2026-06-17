@@ -5649,6 +5649,11 @@ body {
     padding: 0;
     background-color: white;
   }
+
+  #receipt-print-wrapper img {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
 }
 
 .vp2-court-text {

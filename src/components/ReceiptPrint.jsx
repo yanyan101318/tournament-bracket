@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
+import { BRAND_MOTTO, BRAND_NAME, LOGO_PATH } from "../lib/brand";
 
 export default function ReceiptPrint({ booking, receiptId, printedBy, onAfterPrint }) {
   const [printTriggered, setPrintTriggered] = useState(false);
@@ -8,7 +9,7 @@ export default function ReceiptPrint({ booking, receiptId, printedBy, onAfterPri
     // Trigger print automatically when component mounts
     if (!printTriggered) {
       setPrintTriggered(true);
-      document.title = "RANAW PICKLEBALL COURT RECEIPT";
+      document.title = `${BRAND_NAME} RECEIPT`;
       // Small timeout to ensure DOM is fully updated
       setTimeout(() => {
         window.print();
@@ -63,9 +64,21 @@ export default function ReceiptPrint({ booking, receiptId, printedBy, onAfterPri
     }}>
       {/* Header */}
       <div style={{ textAlign: "center", marginBottom: "15px" }}>
-        <h2 style={{ margin: "0 0 4px 0", fontSize: "22px", textTransform: "uppercase", fontWeight: "900", letterSpacing: "1px" }}>RANAW PICKLEBALL COURT</h2>
+        <img
+          src={LOGO_PATH}
+          alt={BRAND_NAME}
+          style={{
+            display: "block",
+            margin: "0 auto 6px",
+            maxWidth: "100%",
+            width: "220px",
+            height: "auto",
+            WebkitPrintColorAdjust: "exact",
+            printColorAdjust: "exact",
+          }}
+        />
         <div style={{ fontSize: "12px", fontWeight: "bold", textTransform: "uppercase", marginBottom: "2px" }}>Official Booking Receipt</div>
-        <div style={{ fontSize: "11px", fontStyle: "italic", color: "#555" }}>Play. Compete. Experience Excellence.</div>
+        <div style={{ fontSize: "11px", fontStyle: "italic", color: "#555" }}>{BRAND_MOTTO}</div>
       </div>
 
       <Divider />
@@ -135,7 +148,19 @@ export default function ReceiptPrint({ booking, receiptId, printedBy, onAfterPri
 
       {/* Footer */}
       <div style={{ textAlign: "center", marginTop: "20px" }}>
-        <div style={{ fontWeight: "900", fontSize: "16px", marginBottom: "4px" }}>RANAW PICKLEBALL COURT</div>
+        <img
+          src={LOGO_PATH}
+          alt={BRAND_NAME}
+          style={{
+            display: "block",
+            margin: "0 auto 6px",
+            maxWidth: "100%",
+            width: "180px",
+            height: "auto",
+            WebkitPrintColorAdjust: "exact",
+            printColorAdjust: "exact",
+          }}
+        />
         <div style={{ fontSize: "11px", marginBottom: "12px" }}>Your premier destination for professional pickleball court reservations.</div>
         
         <div style={{ fontSize: "12px", lineHeight: "1.6", color: "#333" }}>

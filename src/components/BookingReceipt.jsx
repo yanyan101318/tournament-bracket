@@ -1,6 +1,8 @@
 import { useCallback } from "react";
 import { jsPDF } from "jspdf";
 import { Printer, Download, X } from "lucide-react";
+import RanawLogo from "./RanawLogo";
+import { BRAND_MOTTO, BRAND_NAME, buildReceiptLogoHtml } from "../lib/brand";
 
 function escapeHtml(s) {
   return String(s ?? "")
@@ -18,9 +20,9 @@ function buildBookingReceiptPrintHtml(receipt) {
       ? `<tr><td>Change</td><td class="right">₱${Number(r.change).toFixed(2)}</td></tr>`
       : "";
   return `
-    <h4 style="text-align:center;font-weight:900;text-transform:uppercase;font-size:18px;margin-bottom:4px">RANAW PICKLEBALL COURT</h4>
+    ${buildReceiptLogoHtml({ maxWidth: "200px", marginBottom: "8px" })}
     <p class="sub" style="text-align:center;font-weight:bold;text-transform:uppercase;margin:0 0 4px 0">Official Booking Receipt</p>
-    <p style="text-align:center;font-size:11px;font-style:italic;color:#64748b;margin:0 0 16px 0">Play. Compete. Experience Excellence.</p>
+    <p style="text-align:center;font-size:11px;font-style:italic;color:#64748b;margin:0 0 16px 0">${escapeHtml(BRAND_MOTTO)}</p>
     <hr style="border:none;border-bottom:1px dashed #ccc;margin-bottom:16px;" />
     <p class="id">ID: ${escapeHtml(r.transactionId)}</p>
     <table>
@@ -41,7 +43,7 @@ function buildBookingReceiptPrintHtml(receipt) {
     <p class="status">${escapeHtml(String(r.customerPayStatus))}</p>
     <hr style="border:none;border-bottom:1px dashed #ccc;margin:24px 0 16px 0;" />
     <div style="text-align:center;">
-      <div style="font-weight:900;font-size:14px;margin-bottom:4px">RANAW PICKLEBALL COURT</div>
+      ${buildReceiptLogoHtml({ maxWidth: "160px", marginBottom: "6px" })}
       <div style="font-size:11px;margin-bottom:12px;color:#64748b">Your premier destination for professional pickleball court reservations.</div>
       <div style="font-size:11px;line-height:1.6;color:#333;">
         <div>Phone: [Insert contact]</div>
@@ -89,7 +91,7 @@ export default function BookingReceipt({ receipt, onDismiss, className = "" }) {
       return;
     }
     const bodyInner = buildBookingReceiptPrintHtml(receipt);
-    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"/><title>RANAW PICKLEBALL COURT RECEIPT</title>
+    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"/><title>${BRAND_NAME} RECEIPT</title>
       <style>
         @page { margin: 12mm; }
         body{margin:0;padding:24px;background:#fff;color:#0f172a;font:14px system-ui,sans-serif;}
@@ -141,7 +143,7 @@ export default function BookingReceipt({ receipt, onDismiss, className = "" }) {
     let y = 48;
     doc.setFont("helvetica", "bold");
     doc.setFontSize(16);
-    doc.text("RANAW PICKLEBALL COURT — Booking receipt", 48, y);
+    doc.text(`${BRAND_NAME} — Booking receipt`, 48, y);
     y += line * 1.2;
     doc.setFontSize(10);
     doc.setFont("helvetica", "normal");
@@ -208,7 +210,7 @@ export default function BookingReceipt({ receipt, onDismiss, className = "" }) {
       </div>
 
       <div className="booking-receipt-print-root rounded-xl border border-slate-700 bg-slate-900/60 p-5 text-left text-sm">
-        <h4 className="text-lg font-bold text-white m-0 tracking-wide uppercase">RANAW PICKLEBALL COURT</h4>
+        <RanawLogo variant="receipt" className="mb-2" />
         <p className="text-slate-500 text-xs mt-1 mb-4 uppercase font-bold tracking-wider">Official Booking Receipt</p>
         <p className="text-slate-400 text-xs font-mono break-all mb-4">ID: {r.transactionId}</p>
         <table className="w-full text-sm">

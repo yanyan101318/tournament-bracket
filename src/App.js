@@ -24,7 +24,6 @@ import PaddleStackingPage   from "./admin/PaddleStackingPage";
 import PosPage              from "./admin/PosPage";
 import SalesHistoryPage     from "./admin/SalesHistoryPage";
 import VendorStoresPage     from "./admin/vendors/VendorStoresPage";
-import VendorSettlementsPage from "./admin/vendors/VendorSettlementsPage";
 import VendorPortal         from "./vendor/VendorPortal";
 
 // Tournament public pages (scorer / viewer)
@@ -33,32 +32,38 @@ import ViewerPage from "./pages/ViewerPage";
 import OrderPage from "./pages/OrderPage";
 import FoodCourtPage from "./pages/FoodCourtPage";
 import CustomerAccountPage from "./pages/CustomerAccountPage";
+import KioskPage from "./pages/KioskPage";
 import PaddleViewerPage from "./pages/PaddleViewerPage";
 import PaddleScorerPage from "./pages/PaddleScorerPage";
+import ExportExamples from "./pages/ExportExamples";
 
 import "./App.css";
 import "./admin/admin.css";
 import "./auth/auth.css";
 import "./marketplace/marketplace.css";
 import { Toaster } from "react-hot-toast";
+import { NavigationBlockerProvider } from "./contexts/NavigationBlockerContext";
 
 export default function App() {
   return (
     <AuthProvider>
       <BrowserRouter>
-        <Toaster
-          position="top-right"
-          toastOptions={{
-            style: { background: "#151e2d", color: "#e2e8f0", border: "1px solid #334155" },
-          }}
-        />
-        <Routes>
+        <NavigationBlockerProvider>
+          <Toaster
+            position="top-right"
+            toastOptions={{
+              style: { background: "#151e2d", color: "#e2e8f0", border: "1px solid #334155" },
+            }}
+          />
+          <Routes>
 
           {/* ── PUBLIC ── */}
           <Route path="/login"    element={<LoginPage/>}/>
           <Route path="/register" element={<RegisterPage/>}/>
+          <Route path="/export-examples" element={<ExportExamples />} />
+          <Route path="/kiosk" element={<KioskPage />} />
 
-          {/* ── PUBLIC TOURNAMENT VIEWS & ORDERING ── */}
+          {/* ── FOOD COURT APP (Standalone Shell) ── */}
           <Route path="/bracket/:tournamentId"           element={<ViewerPage/>}/>
           <Route path="/score/:tournamentId/:matchId"    element={<ScorerPage/>}/>
           <Route path="/foodcourt"                       element={<FoodCourtPage/>}/>
@@ -67,6 +72,7 @@ export default function App() {
           <Route path="/vendor/store/:storeId"          element={<VendorPortal/>}/>
           <Route path="/paddle-viewer"                   element={<PaddleViewerPage/>}/>
           <Route path="/paddle-score/:courtId?"          element={<PaddleScorerPage/>}/>
+          <Route path="/export-examples"                 element={<ExportExamples/>}/>
 
           {/* ── ADMIN PANEL ── */}
           <Route path="/admin" element={
@@ -85,7 +91,6 @@ export default function App() {
             <Route path="pos"           element={<PosPage/>}/>
             <Route path="sales-history" element={<SalesHistoryPage/>}/>
             <Route path="vendors"         element={<VendorStoresPage/>}/>
-            <Route path="vendor-settlements" element={<VendorSettlementsPage/>}/>
             <Route path="tournament"    element={<AdminTournament/>}/>
             <Route path="paddle-stack"  element={<PaddleStackingPage/>}/>
             <Route path="analytics"     element={<Analytics/>}/>
@@ -106,6 +111,7 @@ export default function App() {
           <Route path="*" element={<Navigate to="/login" replace/>}/>
 
         </Routes>
+        </NavigationBlockerProvider>
       </BrowserRouter>
     </AuthProvider>
   );

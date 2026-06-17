@@ -1,5 +1,7 @@
 /** Shared POS receipt formatting (print + modal). */
 
+import { buildReceiptLogoHtml, BRAND_NAME } from "../lib/brand";
+
 export function formatReceiptCurrency(n) {
   const v = Number(n);
   if (Number.isNaN(v)) return "₱0.00";
@@ -53,6 +55,15 @@ export function buildReceiptHtml({
     padding: 2mm 3mm 3mm;
     font-size: 10px;
     line-height: 1.25;
+  }
+  .brand-logo {
+    display: block;
+    margin: 0 auto 3px;
+    max-width: 100%;
+    width: 58mm;
+    height: auto;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
   }
   h1 {
     font-size: 11px;
@@ -127,7 +138,8 @@ export function buildReceiptHtml({
   }
 </style></head><body>
 <div class="wrap">
-<h1>${escapeHtml(headerTitle)}</h1>
+${buildReceiptLogoHtml({ maxWidth: "58mm", marginBottom: "3px" })}
+${headerTitle !== BRAND_NAME ? `<h1>${escapeHtml(headerTitle)}</h1>` : ""}
 <div class="muted">${escapeHtml(when)}</div>
 ${extraHeaderHtml}
 <div class="tid">ID ${escapeHtml(transactionId)}</div>
@@ -180,14 +192,34 @@ export function printReceiptHtml(html) {
     };
 
     const doPrint = () => {
-      try {
-        iframe.contentWindow?.focus();
-        iframe.contentWindow?.print();
-      } catch {
-        /* ignore */
-      } finally {
-        cleanup();
+      const imgs = frameDoc.querySelectorAll("img");
+      const finish = () => {
+        try {
+          iframe.contentWindow?.focus();
+          iframe.contentWindow?.print();
+        } catch {
+          /* ignore */
+        } finally {
+          cleanup();
+        }
+      };
+      if (!imgs.length) {
+        finish();
+        return;
       }
+      let pending = imgs.length;
+      const onImgDone = () => {
+        pending -= 1;
+        if (pending <= 0) finish();
+      };
+      imgs.forEach((img) => {
+        if (img.complete) onImgDone();
+        else {
+          img.addEventListener("load", onImgDone, { once: true });
+          img.addEventListener("error", onImgDone, { once: true });
+        }
+      });
+      setTimeout(finish, 1500);
     };
 
     iframe.onload = doPrint;

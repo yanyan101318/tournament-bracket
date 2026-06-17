@@ -219,10 +219,7 @@ export default function VendorPortal() {
               <div className="text-xs text-slate-500">Gross sales</div>
               <div className="text-2xl font-bold text-emerald-400">₱{summary.totalSales.toFixed(2)}</div>
             </div>
-            <div className="bg-slate-900 border border-slate-800 rounded-xl p-4">
-              <div className="text-xs text-slate-500">Commission</div>
-              <div className="text-xl font-bold text-amber-400">₱{summary.commission.toFixed(2)}</div>
-            </div>
+
             <div className="bg-slate-900 border border-slate-800 rounded-xl p-4">
               <div className="text-xs text-slate-500">Net earnings</div>
               <div className="text-xl font-bold text-cyan-400">₱{summary.net.toFixed(2)}</div>

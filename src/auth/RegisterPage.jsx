@@ -12,6 +12,7 @@ import {
   isRegisterAccessGranted,
   clearRegisterAccess,
 } from "./registerAccess";
+import RanawLogo from "../components/RanawLogo";
 
 export default function RegisterPage() {
   const [form, setForm] = useState({
@@ -96,8 +97,7 @@ export default function RegisterPage() {
       <div className="auth-page">
         <div className="auth-left">
           <div className="auth-brand">
-            <div className="auth-brand-icon">🏓</div>
-            <h1 className="auth-brand-name">RANAW PICKLEBALL COURT</h1>
+            <RanawLogo variant="auth" />
             <p className="auth-brand-tagline">Court Reservation Management</p>
           </div>
           <div className="auth-left-features">
@@ -122,6 +122,9 @@ export default function RegisterPage() {
 
         <div className="auth-right">
           <div className="auth-card">
+            <div className="auth-card-logo">
+              <RanawLogo variant="authCard" />
+            </div>
             <div className="auth-card-header">
               <h2 className="auth-card-title">Check your email</h2>
               <p className="auth-card-sub">
@@ -144,8 +147,7 @@ export default function RegisterPage() {
     <div className="auth-page">
       <div className="auth-left">
         <div className="auth-brand">
-          <div className="auth-brand-icon">🏓</div>
-          <h1 className="auth-brand-name">RANAW PICKLEBALL COURT</h1>
+          <RanawLogo variant="auth" />
           <p className="auth-brand-tagline">Court Reservation Management</p>
         </div>
         <div className="auth-left-features">
@@ -170,6 +172,9 @@ export default function RegisterPage() {
 
       <div className="auth-right">
         <div className="auth-card">
+          <div className="auth-card-logo">
+            <RanawLogo variant="authCard" />
+          </div>
           <div className="auth-card-header">
             <h2 className="auth-card-title">Create your RANAW PICKLEBALL COURT account</h2>
             <p className="auth-card-sub">

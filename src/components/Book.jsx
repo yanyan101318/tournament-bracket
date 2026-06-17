@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { useSearchParams, useNavigate, useLocation } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
 import { useOfflineSync } from "../hooks/useOfflineSync";
+import { useUnsavedChanges } from "../hooks/useUnsavedChanges";
 import { db } from "../firebase";
 import "./book.css";
 import {
@@ -24,7 +25,7 @@ import {
 import toast from "react-hot-toast";
 import { format, addDays } from "date-fns";
 import { roundMoney, parseCashAmount, parseAmountPaid } from "../lib/bookingMoney";
-import { TIME_SLOTS, isSlotStartAvailableForDuration } from "../lib/bookingSlots";
+import { TIME_SLOTS, isSlotStartAvailableForDuration, calculateEndTime, isSlotWithinCourtHours, getEffectiveCourtStatus } from "../lib/bookingSlots";
 import {
   PLAN_FULL,
   PLAN_PARTIAL,
@@ -36,6 +37,7 @@ import {
 import { upsertCustomerAfterBooking } from "../lib/crm";
 import BookingReceipt from "./BookingReceipt";
 import ReceiptPrint from "./ReceiptPrint";
+import RanawLogo from "./RanawLogo";
 import { sendBookingSMS } from "../lib/smsService";
 
 function isSlotInPast(dateStr, timeStr) {
@@ -56,6 +58,16 @@ function isSlotInPast(dateStr, timeStr) {
   return slotDate < new Date();
 }
 
+function format24to12(time24) {
+  if (!time24) return "";
+  let [hh, mm] = time24.split(":");
+  hh = parseInt(hh, 10);
+  const ap = hh >= 12 ? "PM" : "AM";
+  hh = hh % 12 || 12;
+  const hhStr = String(hh).padStart(2, "0");
+  return `${hhStr}:${mm} ${ap}`;
+}
+
 function deriveCourtKind(c) {
   const joined = (c.amenities || [])
     .map((x) => String(x).toLowerCase())
@@ -65,7 +77,7 @@ function deriveCourtKind(c) {
   return "Court";
 }
 
-const DURATIONS = [1, 1.5, 2, 2.5, 3, 4];
+const DURATIONS = [0.5, 1, 1.5, 2, 2.5, 3, "Custom"];
 
 const PROMOS = [
   { code: "PICKLE10", discount: 0.1, label: "10% off" },
@@ -117,12 +129,16 @@ export default function Book() {
   const [receiptSnapshot, setReceiptSnapshot] = useState(null);
   const [isPrinting, setIsPrinting] = useState(false);
   const { syncState, wrapSync, setSyncState } = useOfflineSync();
+  const { markDirty, markClean } = useUnsavedChanges();
 
   const [form, setForm] = useState({
     courtId: courtParam || "",
     date: format(addDays(new Date(), 1), "yyyy-MM-dd"),
     timeSlot: "",
+    customStartTime: "",
+    isCustomTime: false,
     duration: 1,
+    customDuration: "",
     players: 2,
     equipment: [],
     notes: "",
@@ -133,8 +149,12 @@ export default function Book() {
     paymentPlan: PLAN_FULL,
   });
 
+  const actualDuration = form.duration === "Custom" ? Number(form.customDuration) || 1 : form.duration;
+  const actualTimeSlot = form.isCustomTime ? format24to12(form.customStartTime) : form.timeSlot;
+  const calculatedEndTime = (actualTimeSlot && actualDuration > 0) ? calculateEndTime(actualTimeSlot, actualDuration) : "";
+
   const activeCourts = useMemo(
-    () => courts.filter((c) => c.isActive !== false),
+    () => courts.filter((c) => getEffectiveCourtStatus(c)),
     [courts]
   );
 
@@ -146,6 +166,9 @@ export default function Book() {
       name: raw.name || "Court",
       price: Number(raw.pricePerHour) || 0,
       type: deriveCourtKind(raw),
+      activeStartTime: raw.activeStartTime,
+      activeEndTime: raw.activeEndTime,
+      rawCourt: raw,
     };
   }, [activeCourts, form.courtId]);
 
@@ -194,6 +217,7 @@ export default function Book() {
         return {
           id: d.id,
           timeSlot: data.timeSlot,
+          startTime: data.startTime || data.timeSlot,
           duration: Number(data.duration) || 1,
           status: data.status,
         };
@@ -308,15 +332,30 @@ export default function Book() {
 
   /**
    * When duration changes or we load overlapping bookings from Firestore, clear an
-   * impossible start time (e.g. a 3h booking at noon blocks 12:00–2:00 as starts).
+   * impossible start time.
    */
   useEffect(() => {
     setForm((f) => {
-      if (!f.timeSlot) return f;
-      if (isSlotStartAvailableForDuration(f.timeSlot, f.duration, dayBookings)) return f;
-      return { ...f, timeSlot: "" };
+      const actualD = f.duration === "Custom" ? Number(f.customDuration) || 1 : f.duration;
+      if (f.isCustomTime) {
+        if (!f.customStartTime) return f;
+        const time12 = format24to12(f.customStartTime);
+        if (isSlotStartAvailableForDuration(time12, actualD, dayBookings) && isSlotWithinCourtHours(time12, actualD, court)) return f;
+        return { ...f, customStartTime: "" };
+      } else {
+        if (!f.timeSlot) return f;
+        if (isSlotStartAvailableForDuration(f.timeSlot, actualD, dayBookings) && isSlotWithinCourtHours(f.timeSlot, actualD, court)) return f;
+        return { ...f, timeSlot: "" };
+      }
     });
-  }, [form.duration, dayBookings]);
+  }, [form.duration, form.customDuration, form.isCustomTime, dayBookings]);
+
+  /** Track Dirty State */
+  useEffect(() => {
+    // The user requested that the page is ALWAYS protected from exit, 
+    // even if nothing has been typed yet.
+    markDirty();
+  }, [markDirty]);
 
   /** Drop invalid add-on ids once we know the rental list (avoids clearing selection before snapshot). */
   useEffect(() => {
@@ -337,7 +376,7 @@ export default function Book() {
     () => equipmentItems.reduce((s, e) => s + getRentalItemPrice(e), 0),
     [equipmentItems]
   );
-  const courtTotal = (court?.price ?? 0) * form.duration;
+  const courtTotal = (court?.price ?? 0) * actualDuration;
   const subtotal = courtTotal + equipmentTotal;
   const discount = appliedPromo ? subtotal * appliedPromo.discount : 0;
   const total = subtotal - discount;
@@ -425,7 +464,7 @@ export default function Book() {
     if (!court.price || court.price <= 0) {
       return toast.error("This court has no hourly rate set. Ask admin to update court pricing.");
     }
-    if (!form.timeSlot) return toast.error("Please select a time slot");
+    if (!actualTimeSlot) return toast.error("Please select a time slot");
     if (!form.playerName) return toast.error("Player name is required");
     if (!String(form.contactNumber ?? "").trim()) {
       toast.error("Contact number is required");
@@ -474,13 +513,22 @@ export default function Book() {
         return {
           id: d.id,
           timeSlot: data.timeSlot,
+          startTime: data.startTime || data.timeSlot,
           duration: Number(data.duration) || 1,
           status: data.status,
         };
       });
-      if (!isSlotStartAvailableForDuration(form.timeSlot, form.duration, latestDay)) {
+      if (!isSlotStartAvailableForDuration(actualTimeSlot, actualDuration, latestDay)) {
         setDayBookings(latestDay);
         toast.error("That time is no longer available. Please choose another slot.");
+        return;
+      }
+      if (!isSlotWithinCourtHours(actualTimeSlot, actualDuration, court)) {
+        toast.error(`The selected time is outside the court's operating hours (${court.activeStartTime || "06:00"} - ${court.activeEndTime || "22:00"}).`);
+        return;
+      }
+      if (court && court.rawCourt && !getEffectiveCourtStatus(court.rawCourt)) {
+        toast.error("This court is currently unavailable for rent.");
         return;
       }
 
@@ -511,8 +559,10 @@ export default function Book() {
         courtId: form.courtId,
         courtName: court.name,
         date: form.date,
-        timeSlot: form.timeSlot,
-        duration: form.duration,
+        timeSlot: actualTimeSlot,
+        startTime: actualTimeSlot,
+        endTime: calculatedEndTime,
+        duration: actualDuration,
         players: form.players,
         equipment: form.equipment,
         notes: form.notes,
@@ -552,7 +602,9 @@ export default function Book() {
         courtId: form.courtId,
         courtName: court.name,
         date: form.date,
-        timeSlot: form.timeSlot,
+        timeSlot: actualTimeSlot,
+        startTime: actualTimeSlot,
+        endTime: calculatedEndTime,
         amount: roundMoney(total),
         totalAmount: roundMoney(total),
         amountPaid: amountPaidRounded,
@@ -592,12 +644,18 @@ export default function Book() {
         successMsg: "RANAW PICKLEBALL COURT booking confirmed successfully",
         offlineMsg: "Saved Offline — Will Sync Automatically",
         errorMsg: "Booking Failed — Retry",
-        onSuccess: () => setStep(4),
-        onOfflineSuccess: () => setTimeout(() => setStep(4), 1000)
+        onSuccess: () => {
+          markClean();
+          setStep(4);
+        },
+        onOfflineSuccess: () => {
+          markClean();
+          setTimeout(() => setStep(4), 1000);
+        }
       });
 
       if (adminMode && String(form.contactNumber).trim()) {
-        const smsMsg = "RANAW PICKLEBALL COURT: Your booking has been CONFIRMED. Please arrive on your scheduled time. Thank you for choosing RANAW PICKLEBALL COURT.";
+        const smsMsg = "Assalamu alaikum! RANAW PICKLEBALL COURT: Your booking has been CONFIRMED. Please arrive on your scheduled time. Thank you for choosing RANAW PICKLEBALL COURT.";
         try {
           await sendBookingSMS(bookingRef.id, String(form.contactNumber).trim(), smsMsg);
         } catch (e) {
@@ -718,14 +776,15 @@ export default function Book() {
     <div className={adminMode ? "book-page--embedded" : "min-h-screen"}>
       <div
         className={
-          adminMode ? "court-pattern pt-4 pb-10 px-2 sm:px-4" : "min-h-screen court-pattern pt-20 pb-12 px-4"
+          adminMode ? "court-pattern pt-4 pb-10 px-2 sm:px-4" : "min-h-screen court-pattern pt-12 sm:pt-20 pb-8 sm:pb-12 px-3 sm:px-4"
         }
       >
         <div className="max-w-5xl mx-auto">
           {/* Header */}
-          <div className="text-center mb-8 pt-4">
-            <h1 className="font-display text-4xl tracking-wider text-white">BOOK A <span className="gradient-text">COURT</span></h1>
-            <p className="text-slate-500 mt-1 text-sm">Complete all steps to confirm your reservation</p>
+          <div className="text-center mb-6 sm:mb-8 pt-2 sm:pt-4 px-2">
+            <RanawLogo variant="auth" className="mb-3 sm:mb-4 mx-auto !max-w-[160px] sm:!max-w-[200px]" />
+            <h1 className="font-display text-2xl sm:text-4xl tracking-wider text-white">BOOK A <span className="gradient-text">COURT</span></h1>
+            <p className="text-slate-500 mt-1 text-xs sm:text-sm">Complete all steps to confirm your reservation</p>
           </div>
 
           {/* Steps */}
@@ -927,57 +986,107 @@ export default function Book() {
                           min={minDate}
                           max={maxDate}
                           value={form.date}
-                          onChange={(e) => setForm({ ...form, date: e.target.value, timeSlot: "" })}
+                          onChange={(e) => setForm({ ...form, date: e.target.value, timeSlot: "", customStartTime: "" })}
                         />
                       </div>
                       <div>
                         <label className="label">Duration</label>
-                        <select
-                          className="input-field"
-                          value={form.duration}
-                          onChange={(e) => setForm({ ...form, duration: Number(e.target.value) })}
-                        >
-                          {DURATIONS.map((d) => (
-                            <option key={d} value={d}>{d} {d === 1 ? "hour" : "hours"}</option>
-                          ))}
-                        </select>
+                        <div className="flex gap-2">
+                          <select
+                            className="input-field"
+                            value={form.duration}
+                            onChange={(e) => setForm({ ...form, duration: e.target.value === "Custom" ? "Custom" : Number(e.target.value) })}
+                          >
+                            {DURATIONS.map((d) => (
+                              <option key={d} value={d}>{d} {d === 1 ? "hour" : (d === "Custom" ? "" : "hours")}</option>
+                            ))}
+                          </select>
+                          {form.duration === "Custom" && (
+                            <input
+                              type="number"
+                              step="0.25"
+                              min="0.25"
+                              className="input-field w-24"
+                              placeholder="Hours"
+                              value={form.customDuration}
+                              onChange={(e) => setForm({ ...form, customDuration: e.target.value })}
+                            />
+                          )}
+                        </div>
                       </div>
                     </div>
-                    <label className="label">Available Time Slots</label>
-                    <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
-                      {TIME_SLOTS.map((slot) => {
-                        const inPast = isSlotInPast(form.date, slot);
-                        const exactBooked = dayBookings.some((b) => b.timeSlot === slot);
-                        const isTaken = !inPast && !isSlotStartAvailableForDuration(
-                          slot,
-                          form.duration,
-                          dayBookings
-                        );
-                        const isOverlap = isTaken && !exactBooked;
-                        const isUnavailable = inPast || isTaken;
+                    
+                    <div className="flex items-center justify-between mb-2">
+                      <label className="label mb-0">Start Time</label>
+                      {adminMode && (
+                        <label className="flex items-center gap-2 text-sm text-slate-400 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={form.isCustomTime}
+                            onChange={(e) => setForm({ ...form, isCustomTime: e.target.checked, timeSlot: "", customStartTime: "" })}
+                            className="rounded border-slate-700 bg-slate-800 text-green-500 focus:ring-green-500"
+                          />
+                          Custom Time
+                        </label>
+                      )}
+                    </div>
+                    
+                    {form.isCustomTime ? (
+                      <div className="mb-4">
+                        <input
+                          type="time"
+                          className="input-field max-w-[200px]"
+                          value={form.customStartTime}
+                          onChange={(e) => setForm({ ...form, customStartTime: e.target.value })}
+                        />
+                      </div>
+                    ) : (
+                      <>
+                        <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
+                          {TIME_SLOTS.map((slot) => {
+                            const inPast = isSlotInPast(form.date, slot);
+                            const exactBooked = dayBookings.some((b) => (b.startTime || b.timeSlot) === slot);
+                            const isTaken = !inPast && !isSlotStartAvailableForDuration(
+                              slot,
+                              actualDuration,
+                              dayBookings
+                            );
+                            const outOfHours = !isSlotWithinCourtHours(slot, actualDuration, court);
+                            const isOverlap = isTaken && !exactBooked;
+                            const isUnavailable = inPast || isTaken || outOfHours;
 
-                        return (
-                          <button
-                            key={slot}
-                            type="button"
-                            disabled={isUnavailable}
-                            onClick={() => setForm({ ...form, timeSlot: slot })}
-                            className={`py-2.5 px-3 rounded-xl text-xs font-medium transition-all ${isUnavailable ? "bg-red-500/10 border border-red-500/20 text-red-400/50 cursor-not-allowed" :
-                                form.timeSlot === slot ? "bg-green-500 text-slate-950 glow-green" :
-                                  "bg-slate-800 text-slate-400 hover:bg-slate-700 hover:text-white border border-slate-700"
-                              }`}
-                          >
-                            {slot}
-                            {exactBooked && <div className="text-[10px] leading-tight mt-0.5">Booked</div>}
-                            {isOverlap && !exactBooked && <div className="text-[10px] leading-tight mt-0.5">Conflicts</div>}
-                            {inPast && <div className="text-[10px] leading-tight mt-0.5">Not Available</div>}
-                          </button>
-                        );
-                      })}
-                    </div>
-                    <div className="text-xs text-slate-500 mt-3">
-                      <p>Booked = exact slot start is reserved. Conflicts = this start time would overlap an existing booking for the selected duration.</p>
-                    </div>
+                            return (
+                              <button
+                                key={slot}
+                                type="button"
+                                disabled={isUnavailable}
+                                onClick={() => setForm({ ...form, timeSlot: slot })}
+                                className={`py-2.5 px-3 rounded-xl text-xs font-medium transition-all ${isUnavailable ? "bg-red-500/10 border border-red-500/20 text-red-400/50 cursor-not-allowed" :
+                                    form.timeSlot === slot ? "bg-green-500 text-slate-950 glow-green" :
+                                      "bg-slate-800 text-slate-400 hover:bg-slate-700 hover:text-white border border-slate-700"
+                                  }`}
+                              >
+                                {slot}
+                                {exactBooked && <div className="text-[10px] leading-tight mt-0.5">Booked</div>}
+                                {isOverlap && !exactBooked && <div className="text-[10px] leading-tight mt-0.5">Conflicts</div>}
+                                {inPast && <div className="text-[10px] leading-tight mt-0.5">Not Available</div>}
+                              </button>
+                            );
+                          })}
+                        </div>
+                        <div className="text-xs text-slate-500 mt-3">
+                          <p>Booked = exact slot start is reserved. Conflicts = this start time would overlap an existing booking for the selected duration.</p>
+                        </div>
+                      </>
+                    )}
+
+                    {calculatedEndTime && (
+                      <div className="mt-4 p-3 rounded-lg bg-slate-800/50 border border-slate-700 flex items-center gap-2">
+                        <Clock size={16} className="text-cyan-400" />
+                        <span className="text-slate-300 text-sm">Calculated End Time:</span>
+                        <strong className="text-white">{calculatedEndTime}</strong>
+                      </div>
+                    )}
                   </div>
 
                   {/* Notes */}

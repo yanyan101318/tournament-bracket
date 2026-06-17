@@ -227,7 +227,7 @@ export default function MarketplaceBrowse({ booking, onOrderPlaced }) {
                   <div className="text-[10px] text-slate-500 mt-1">{categoryLabel(store.category)}</div>
                   <div className="mt-2 flex justify-center gap-1 flex-wrap">
                     <span className="mkp-badge-open">Open</span>
-                    <span className="text-[10px] text-slate-500">~{prep} min</span>
+
                   </div>
                 </button>
               );
@@ -281,7 +281,7 @@ export default function MarketplaceBrowse({ booking, onOrderPlaced }) {
                 <div className="font-semibold text-white text-sm line-clamp-2">{p.name}</div>
                 <div className="text-emerald-400 text-sm font-mono mt-1">₱{price.toFixed(2)}</div>
                 <div className="text-cyan-400 text-xs mt-2 font-semibold">Stock Left: {stock}</div>
-                {stock <= 5 && stock > 0 && <div className="text-amber-400 text-[10px] mt-1">Only {stock} left!</div>}
+
               </div>
               {inCart > 0 ? (
                 <div className="p-2 border-t border-slate-800 flex items-center justify-between gap-1">

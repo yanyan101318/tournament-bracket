@@ -25,8 +25,9 @@ import { useOfflineSync } from "../hooks/useOfflineSync";
 import ReceiptPrint from "../components/ReceiptPrint";
 import { sendBookingSMS } from "../lib/smsService";
 import { resolveBookingContactNumber } from "../lib/resolveContactNumber";
+import ExportButton from "../components/export/ExportButton";
 
-const STATUS_COLORS = { Pending:"pending", Approved:"approved", Cancelled:"rejected" };
+const STATUS_COLORS = { Pending: "pending", Approved: "approved", Cancelled: "rejected" };
 const PAY_STATUS_BADGE = { paid: "approved", partial: "pending", unpaid: "rejected" };
 
 function deriveRemainingBalance(row) {
@@ -50,14 +51,14 @@ export default function BookingManager() {
   const EMPTY_BALANCE_MODAL = { open: false, booking: null, amount: "", method: "cash" };
   const PAGE_SIZE = 10;
   const [bookings, setBookings] = useState([]);
-  const [filter, setFilter]     = useState("All");
-  const [search, setSearch]     = useState("");
+  const [filter, setFilter] = useState("All");
+  const [search, setSearch] = useState("");
   const [sortByDate, setSortByDate] = useState("created_desc");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const [page, setPage] = useState(1);
-  const [loading, setLoading]   = useState(true);
-  const [acting, setActing]     = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [acting, setActing] = useState(null);
   const [selected, setSelected] = useState(null);
   const [extendHours, setExtendHours] = useState(1);
   const [extending, setExtending] = useState(false);
@@ -77,15 +78,15 @@ export default function BookingManager() {
   }, []);
 
   useEffect(() => {
-    const q = query(collection(db,"bookings"), orderBy("createdAt","desc"));
+    const q = query(collection(db, "bookings"), orderBy("createdAt", "desc"));
     const unsub = onSnapshot(
       q,
       { includeMetadataChanges: true },
       (snap) => {
-        setBookings(snap.docs.map((d) => ({ 
-          id: d.id, 
+        setBookings(snap.docs.map((d) => ({
+          id: d.id,
           hasPendingWrites: d.metadata.hasPendingWrites,
-          ...d.data() 
+          ...d.data()
         })));
         setLoading(false);
       },
@@ -244,12 +245,12 @@ export default function BookingManager() {
       setSelected((s) =>
         s && s.id === selected.id
           ? {
-              ...s,
-              totalAmount: total,
-              amountPaid: paid,
-              remainingBalance: remaining,
-              customerPaymentStatus: payStatus,
-            }
+            ...s,
+            totalAmount: total,
+            amountPaid: paid,
+            remainingBalance: remaining,
+            customerPaymentStatus: payStatus,
+          }
           : s
       );
       setPaidEditDraft(paid.toFixed(2));
@@ -320,11 +321,11 @@ export default function BookingManager() {
     setActing(id);
     try {
       const batch = writeBatch(db);
-      batch.update(doc(db,"bookings",id), {
+      batch.update(doc(db, "bookings", id), {
         status,
         reviewedAt: Timestamp.now(),
       });
-      
+
       if (status === "Cancelled") {
         const paySnap = await getDocs(query(collection(db, "payments"), where("bookingId", "==", id)));
         paySnap.forEach(d => {
@@ -336,7 +337,7 @@ export default function BookingManager() {
         successMsg: `Booking ${status}`,
         offlineMsg: "Action Queued for Sync"
       });
-    } catch(err) { console.error(err); }
+    } catch (err) { console.error(err); }
     setActing(null);
     setSelected(null);
   }
@@ -361,7 +362,7 @@ export default function BookingManager() {
       return;
     }
     const check = canExtendBooking({
-      timeSlot: b.timeSlot,
+      timeSlot: b.startTime || b.timeSlot,
       duration: Number(b.duration) || 1,
       extendHours: hours,
       courtId: b.courtId,
@@ -388,6 +389,7 @@ export default function BookingManager() {
       const batch = writeBatch(db);
       batch.update(doc(db, "bookings", b.id), {
         duration: check.newDuration,
+        endTime: check.newEndTime,
         totalAmount: newTotal,
         remainingBalance: newRemaining,
         customerPaymentStatus: payStatus,
@@ -403,7 +405,7 @@ export default function BookingManager() {
           customerPaymentStatus: payStatus,
         });
       });
-      
+
       await wrapSync(batch.commit(), {
         successMsg: "Booking extended",
         offlineMsg: "Extension Saved Offline — Pending Server Sync"
@@ -412,13 +414,14 @@ export default function BookingManager() {
       setSelected((s) =>
         s && s.id === b.id
           ? {
-              ...s,
-              duration: check.newDuration,
-              totalAmount: newTotal,
-              remainingBalance: newRemaining,
-              customerPaymentStatus: payStatus,
-              hourlyRate: roundMoney(hourly),
-            }
+            ...s,
+            duration: check.newDuration,
+            endTime: check.newEndTime,
+            totalAmount: newTotal,
+            remainingBalance: newRemaining,
+            customerPaymentStatus: payStatus,
+            hourlyRate: roundMoney(hourly),
+          }
           : s
       );
     } catch (e) {
@@ -530,11 +533,11 @@ export default function BookingManager() {
       setSelected((s) =>
         s && s.id === b.id
           ? {
-              ...s,
-              amountPaid: newAmountPaid,
-              remainingBalance: newRemaining,
-              customerPaymentStatus: nextPayStatus,
-            }
+            ...s,
+            amountPaid: newAmountPaid,
+            remainingBalance: newRemaining,
+            customerPaymentStatus: nextPayStatus,
+          }
           : s
       );
     } catch (e) {
@@ -612,7 +615,7 @@ export default function BookingManager() {
       const batch = writeBatch(db);
       linkedSnap.forEach((d) => batch.delete(d.ref));
       batch.delete(doc(db, "bookings", id));
-      
+
       await wrapSync(batch.commit(), {
         successMsg: "Booking deleted permanently.",
         offlineMsg: "Action Queued for Sync",
@@ -629,7 +632,7 @@ export default function BookingManager() {
   async function handlePrintReceipt(b) {
     const receiptId = "RCPT-" + b.id.substring(0, 5).toUpperCase() + "-" + Math.floor(100 + Math.random() * 900);
     const printedBy = "Admin";
-    
+
     setActing(b.id);
     try {
       await updateDoc(doc(db, "bookings", b.id), {
@@ -663,10 +666,10 @@ export default function BookingManager() {
       });
 
       setActing("payment_approve_sms");
-      const smsMsg = "RANAW PICKLEBALL COURT: Your booking has been APPROVED. Please arrive on your scheduled time. Thank you for choosing RANAW PICKLEBALL COURT.";
+      const smsMsg = "Assalamu alaikum! This is RANAW PICKLEBALL COURT: Your booking has been APPROVED. Please arrive on your scheduled time. Thank you for choosing RANAW PICKLEBALL COURT.";
       const phone = await resolveBookingContactNumber(db, selected);
       const smsRes = await sendBookingSMS(selected.id, phone, smsMsg);
-      
+
       if (smsRes.success) {
         toast.success("Booking approved and SMS sent successfully");
       } else {
@@ -712,10 +715,10 @@ export default function BookingManager() {
       setRejectReasonModal({ open: false, reason: "" });
 
       setActing("payment_reject_sms");
-      const smsMsg = "RANAW PICKLEBALL COURT: Your booking has been REJECTED. Please review your booking details or contact support for assistance. Thank you.";
+      const smsMsg = "Assalamu alaikum! RANAW PICKLEBALL COURT: Your booking has been REJECTED. Please review your booking details or contact support for assistance. Thank you.";
       const phone = await resolveBookingContactNumber(db, selected);
       const smsRes = await sendBookingSMS(selected.id, phone, smsMsg);
-      
+
       if (smsRes.success) {
         toast.success("Booking rejected and SMS notification sent");
       } else {
@@ -796,27 +799,49 @@ export default function BookingManager() {
   const paged = sorted.slice(start, start + PAGE_SIZE);
 
   const counts = {
-    All:       bookings.length,
-    Pending:   bookings.filter(b=>b.status==="Pending").length,
-    Approved:  bookings.filter(b=>b.status==="Approved").length,
-    Cancelled: bookings.filter(b=>b.status==="Cancelled").length,
+    All: bookings.length,
+    Pending: bookings.filter(b => b.status === "Pending").length,
+    Approved: bookings.filter(b => b.status === "Approved").length,
+    Cancelled: bookings.filter(b => b.status === "Cancelled").length,
   };
 
-  if (loading) return <div className="ad-loading"><div className="ad-spinner"/></div>;
+  if (loading) return <div className="ad-loading"><div className="ad-spinner" /></div>;
 
   return (
     <div className="ad-page">
-      <div className="ad-page-header">
+      <div className="ad-page-header flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4">
         <div>
           <h1 className="ad-page-title">Booking Management</h1>
           <p className="ad-page-sub">Review and manage all court bookings.</p>
         </div>
+        <ExportButton
+          pageTitle="Bookings Report"
+          schemaKey="MY_BOOKINGS"
+          exportData={() => {
+            if (sorted.length === 0) {
+              toast.error("No bookings found to export.");
+              return [];
+            }
+            return sorted.map(b => ({
+              bookingId: b.id,
+              court: b.courtName ?? b.courtId ?? "—",
+              date: b.date ?? "—",
+              timeSlot: b.timeSlot ?? "—",
+              playerName: b.playerName ?? b.userId ?? "—",
+              status: b.status ?? "Pending",
+              amount: Number(b.totalAmount) || 0,
+              paymentMethod: b.customerPaymentStatus ?? "—",
+              notes: ""
+            }));
+          }}
+          filename="Booking_Management_Export"
+        />
       </div>
 
       {/* Filter tabs */}
       <div className="ad-filter-tabs">
-        {Object.entries(counts).map(([k,v])=>(
-          <button key={k} className={`ad-filter-tab ${filter===k?"active":""}`} onClick={()=>setFilter(k)}>
+        {Object.entries(counts).map(([k, v]) => (
+          <button key={k} className={`ad-filter-tab ${filter === k ? "active" : ""}`} onClick={() => setFilter(k)}>
             {k} <span className="ad-filter-count">{v}</span>
           </button>
         ))}
@@ -905,41 +930,41 @@ export default function BookingManager() {
               </tr>
             </thead>
             <tbody>
-              {paged.length===0 && (
+              {paged.length === 0 && (
                 <tr><td colSpan={7} className="ad-empty">No bookings found.</td></tr>
               )}
-              {paged.map(b=>(
-                <tr key={b.id} className="ad-table-row" onClick={()=>setSelected(b)}>
-                  <td className="ad-td-main">{b.playerName??"—"}</td>
-                  <td>{b.courtName??b.courtId??"—"}</td>
-                  <td>{b.date??"—"}</td>
-                  <td>{b.timeSlot??"—"}</td>
+              {paged.map(b => (
+                <tr key={b.id} className="ad-table-row" onClick={() => setSelected(b)}>
+                  <td className="ad-td-main">{b.playerName ?? "—"}</td>
+                  <td>{b.courtName ?? b.courtId ?? "—"}</td>
+                  <td>{b.date ?? "—"}</td>
+                  <td>{b.timeSlot ?? "—"}</td>
                   <td>
-                    <span className={`ad-badge ad-badge-${PAY_STATUS_BADGE[(b.customerPaymentStatus||"").toLowerCase()]??"pending"}`}>
+                    <span className={`ad-badge ad-badge-${PAY_STATUS_BADGE[(b.customerPaymentStatus || "").toLowerCase()] ?? "pending"}`}>
                       {(b.customerPaymentStatus ?? "—").toString()}
                     </span>
                   </td>
-                  <td><span className={`ad-badge ad-badge-${b.hasPendingWrites ? "pending" : (STATUS_COLORS[b.status]??"pending")}`}>{b.hasPendingWrites ? "Pending Sync" : (b.status??"Pending")}</span></td>
-                  <td onClick={e=>e.stopPropagation()}>
+                  <td><span className={`ad-badge ad-badge-${b.hasPendingWrites ? "pending" : (STATUS_COLORS[b.status] ?? "pending")}`}>{b.hasPendingWrites ? "Pending Sync" : (b.status ?? "Pending")}</span></td>
+                  <td onClick={e => e.stopPropagation()}>
                     <div className="ad-action-btns">
-                      {b.status!=="Approved" && (
+                      {b.status !== "Approved" && (
                         <button className="ad-btn ad-btn-sm ad-btn-success"
-                          disabled={acting===b.id}
-                          onClick={()=>setStatus(b.id,"Approved")}>
+                          disabled={acting === b.id}
+                          onClick={() => setStatus(b.id, "Approved")}>
                           ✓ Approve
                         </button>
                       )}
-                      {b.status!=="Cancelled" && (
+                      {b.status !== "Cancelled" && (
                         <button className="ad-btn ad-btn-sm ad-btn-danger"
-                          disabled={acting===b.id}
-                          onClick={()=>setStatus(b.id,"Cancelled")}>
+                          disabled={acting === b.id}
+                          onClick={() => setStatus(b.id, "Cancelled")}>
                           ✕ Cancel
                         </button>
                       )}
                       <button
                         type="button"
                         className="ad-btn ad-btn-sm ad-btn-outline"
-                        disabled={acting===b.id}
+                        disabled={acting === b.id}
                         onClick={() => removeBooking(b.id)}
                         title="Remove this booking record"
                       >
@@ -977,24 +1002,24 @@ export default function BookingManager() {
 
       {/* Detail modal */}
       {selected && (
-        <div className="ad-modal-backdrop" onClick={()=>setSelected(null)}>
-          <div className="ad-modal ad-modal-booking flex flex-col md:flex-row bg-[#0f172a]/95 backdrop-blur-xl border border-slate-700 shadow-2xl rounded-2xl overflow-hidden" style={{ maxWidth: '1200px', width: '96vw' }} onClick={e=>e.stopPropagation()}>
+        <div className="ad-modal-backdrop" onClick={() => setSelected(null)}>
+          <div className="ad-modal ad-modal-booking flex flex-col md:flex-row bg-[#0f172a]/95 backdrop-blur-xl border border-slate-700 shadow-2xl rounded-2xl overflow-hidden" style={{ maxWidth: '1200px', width: '96vw' }} onClick={e => e.stopPropagation()}>
             {/* LEFT COLUMN: INFO */}
             <div className="flex-1 flex flex-col max-h-[85vh] overflow-y-auto custom-scrollbar border-r border-slate-800">
               <div className="ad-modal-header sticky top-0 bg-[#0f172a]/95 backdrop-blur-md z-10 border-b border-slate-800">
                 <h3>Booking & Payment Details</h3>
-                <button className="ad-modal-close lg:hidden" onClick={()=>setSelected(null)}>✕</button>
+                <button className="ad-modal-close lg:hidden" onClick={() => setSelected(null)}>✕</button>
               </div>
               <div className="p-4 space-y-6">
                 {/* Booking Info */}
                 <div>
                   <h4 className="text-xs font-bold text-cyan-400 uppercase tracking-wider mb-3">Booking Information</h4>
                   <div className="grid grid-cols-2 gap-3">
-                    <div className="ad-detail-row"><span>Player</span><strong>{selected.playerName??selected.userId??'—'}</strong></div>
+                    <div className="ad-detail-row"><span>Player</span><strong>{selected.playerName ?? selected.userId ?? '—'}</strong></div>
                     <div className="ad-detail-row"><span>Contact</span><strong>{resolvedContact ?? selected.contactNumber ?? "—"}</strong></div>
-                    <div className="ad-detail-row"><span>Court</span><strong>{selected.courtName??selected.courtId??'—'}</strong></div>
-                    <div className="ad-detail-row"><span>Date</span><strong>{selected.date??'—'}</strong></div>
-                    <div className="ad-detail-row"><span>Time Slot</span><strong>{selected.timeSlot??'—'}</strong></div>
+                    <div className="ad-detail-row"><span>Court</span><strong>{selected.courtName ?? selected.courtId ?? '—'}</strong></div>
+                    <div className="ad-detail-row"><span>Date</span><strong>{selected.date ?? '—'}</strong></div>
+                    <div className="ad-detail-row"><span>Time Slot</span><strong>{selected.timeSlot ?? '—'}</strong></div>
                     <div className="ad-detail-row"><span>Duration</span><strong>{selected.duration ?? "—"} hr</strong></div>
                     <div className="ad-detail-row"><span>Total</span><strong>₱{selectedMoney.total.toFixed(2)}</strong></div>
                     <div className="ad-detail-row ad-detail-row-edit">
@@ -1027,7 +1052,7 @@ export default function BookingManager() {
                       </p>
                     )}
                     <div className="ad-detail-row"><span>Booking Status</span>
-                      <span className={`ad-badge ad-badge-${STATUS_COLORS[selected.status]??"pending"} mt-1 w-fit`}>{selected.status??"Pending"}</span>
+                      <span className={`ad-badge ad-badge-${STATUS_COLORS[selected.status] ?? "pending"} mt-1 w-fit`}>{selected.status ?? "Pending"}</span>
                     </div>
                   </div>
                 </div>
@@ -1037,12 +1062,12 @@ export default function BookingManager() {
                   <div>
                     <h4 className="text-xs font-bold text-cyan-400 uppercase tracking-wider mb-3">Payment Record</h4>
                     <div className="grid grid-cols-2 gap-3">
-                      <div className="ad-detail-row"><span>Amount</span><strong>₱{roundMoney(Number(linkedPayment.amount)||0).toFixed(2)}</strong></div>
-                      <div className="ad-detail-row"><span>Discount</span><strong>₱{roundMoney(Number(linkedPayment.discount)||0).toFixed(2)}</strong></div>
+                      <div className="ad-detail-row"><span>Amount</span><strong>₱{roundMoney(Number(linkedPayment.amount) || 0).toFixed(2)}</strong></div>
+                      <div className="ad-detail-row"><span>Discount</span><strong>₱{roundMoney(Number(linkedPayment.discount) || 0).toFixed(2)}</strong></div>
                       <div className="ad-detail-row"><span>Promo Code</span><strong>{linkedPayment.promoCode ?? "None"}</strong></div>
                       <div className="ad-detail-row"><span>Method</span><strong className="capitalize">{linkedPayment.method ?? "—"}</strong></div>
                       <div className="ad-detail-row"><span>Status</span>
-                        <span className={`ad-badge ad-badge-${PAY_STATUS_BADGE[(linkedPayment.paymentStatus||"").toLowerCase()]??"pending"} mt-1 w-fit`}>
+                        <span className={`ad-badge ad-badge-${PAY_STATUS_BADGE[(linkedPayment.paymentStatus || "").toLowerCase()] ?? "pending"} mt-1 w-fit`}>
                           {linkedPayment.paymentStatus ?? "Pending"}
                         </span>
                       </div>
@@ -1051,7 +1076,7 @@ export default function BookingManager() {
                     </div>
                   </div>
                 )}
-                
+
                 {!linkedPayment && (
                   <div className="p-4 rounded-xl border border-slate-800 bg-slate-900/50 flex items-center justify-center text-sm text-slate-500 font-medium">
                     No linked payment record found for this booking.
@@ -1087,12 +1112,12 @@ export default function BookingManager() {
                   </div>
                 )}
               </div>
-              
+
               <div className="mt-auto p-4 border-t border-slate-800 bg-[#0f172a]/95 sticky bottom-0 z-10 flex flex-wrap gap-2 items-center justify-between">
                 <button
                   type="button"
                   className="ad-btn ad-btn-outline ad-btn-sm"
-                  disabled={acting===selected.id}
+                  disabled={acting === selected.id}
                   onClick={() => removeBooking(selected.id)}
                 >
                   Delete Booking
@@ -1101,7 +1126,7 @@ export default function BookingManager() {
                   <button
                     type="button"
                     className="ad-btn ad-btn-primary ad-btn-sm"
-                    disabled={acting===selected.id}
+                    disabled={acting === selected.id}
                     onClick={() => handlePrintReceipt(selected)}
                   >
                     Print Receipt
@@ -1109,7 +1134,7 @@ export default function BookingManager() {
                   {selectedMoney.remaining > 0 && selected.status !== "Cancelled" && (
                     <button
                       className="ad-btn ad-btn-sm ad-btn-success"
-                      disabled={acting===selected.id}
+                      disabled={acting === selected.id}
                       onClick={() => openBalanceModal(selected)}
                     >
                       + Pay balance
@@ -1122,20 +1147,20 @@ export default function BookingManager() {
             {/* RIGHT COLUMN: PAYMENT PREVIEW & ACTIONS */}
             <div className="md:w-[420px] lg:w-[500px] flex-shrink-0 flex flex-col bg-slate-900/50 relative max-h-[85vh]">
               <div className="absolute top-4 right-4 z-20 hidden lg:block">
-                <button className="w-8 h-8 rounded-full bg-slate-800/80 text-slate-400 hover:text-white hover:bg-slate-700 flex items-center justify-center transition-colors shadow-lg" onClick={()=>setSelected(null)}>✕</button>
+                <button className="w-8 h-8 rounded-full bg-slate-800/80 text-slate-400 hover:text-white hover:bg-slate-700 flex items-center justify-center transition-colors shadow-lg" onClick={() => setSelected(null)}>✕</button>
               </div>
-              
+
               <div className="flex-1 overflow-y-auto custom-scrollbar p-6 flex flex-col">
                 <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-4">Payment Proof Preview</h4>
-                
+
                 {linkedPayment?.paymentImageUrl ? (
-                  <div 
+                  <div
                     className="relative rounded-xl overflow-hidden border border-slate-700 bg-black/50 shadow-2xl cursor-pointer group flex-1 min-h-[300px]"
                     onClick={() => setZoomImage(linkedPayment.paymentImageUrl)}
                   >
-                    <img 
-                      src={linkedPayment.paymentImageUrl} 
-                      alt="Payment Proof" 
+                    <img
+                      src={linkedPayment.paymentImageUrl}
+                      alt="Payment Proof"
                       className="w-full h-full object-contain transition-transform duration-500 group-hover:scale-105"
                     />
                     <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center backdrop-blur-sm">
@@ -1156,15 +1181,15 @@ export default function BookingManager() {
                 {rejectReasonModal.open && (
                   <div className="mt-4 p-4 rounded-xl bg-red-500/10 border border-red-500/20 shadow-inner">
                     <label className="text-[11px] font-bold text-red-400 uppercase tracking-wide block mb-2">Rejection Reason</label>
-                    <textarea 
+                    <textarea
                       className="w-full bg-slate-900/80 border border-red-500/30 rounded-lg p-3 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-red-500 focus:ring-1 focus:ring-red-500 resize-none"
                       rows="2"
                       placeholder="Why is this payment being rejected?"
                       value={rejectReasonModal.reason}
-                      onChange={(e) => setRejectReasonModal(prev => ({...prev, reason: e.target.value}))}
+                      onChange={(e) => setRejectReasonModal(prev => ({ ...prev, reason: e.target.value }))}
                     ></textarea>
                     <div className="flex gap-2 mt-3 justify-end">
-                      <button className="text-xs font-semibold text-slate-400 hover:text-white px-3 py-1.5" onClick={() => setRejectReasonModal({open:false, reason:""})}>Cancel</button>
+                      <button className="text-xs font-semibold text-slate-400 hover:text-white px-3 py-1.5" onClick={() => setRejectReasonModal({ open: false, reason: "" })}>Cancel</button>
                       <button className="text-xs font-bold bg-red-500 text-white px-4 py-1.5 rounded-md hover:bg-red-600 transition-colors shadow-lg shadow-red-500/20" onClick={rejectPayment} disabled={acting === "payment_reject" || acting === "payment_reject_sms"}>
                         {acting === "payment_reject" ? "Rejecting..." : acting === "payment_reject_sms" ? "Sending SMS..." : "Confirm Reject"}
                       </button>
@@ -1177,14 +1202,14 @@ export default function BookingManager() {
               <div className="p-4 border-t border-slate-800 bg-slate-900/80 backdrop-blur-md sticky bottom-0 z-10 flex flex-col gap-2">
                 {!rejectReasonModal.open && (
                   <div className="flex gap-2 w-full">
-                    <button 
+                    <button
                       className="flex-1 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold py-2.5 px-4 rounded-lg transition-all shadow-lg shadow-emerald-500/20 disabled:opacity-50"
                       onClick={approvePayment}
                       disabled={!linkedPayment || acting || linkedPayment.paymentStatus === "Approved"}
                     >
                       {acting === "payment_approve" ? "Approving..." : acting === "payment_approve_sms" ? "Sending SMS..." : "Approve Payment"}
                     </button>
-                    <button 
+                    <button
                       className="flex-1 bg-red-500/10 border border-red-500/30 hover:bg-red-500 hover:text-white text-red-400 font-bold py-2.5 px-4 rounded-lg transition-all disabled:opacity-50"
                       onClick={() => setRejectReasonModal({ open: true, reason: "" })}
                       disabled={!linkedPayment || acting || linkedPayment.paymentStatus === "Rejected"}
@@ -1193,7 +1218,7 @@ export default function BookingManager() {
                     </button>
                   </div>
                 )}
-                <button 
+                <button
                   className="w-full bg-transparent border border-amber-500/30 text-amber-400 hover:bg-amber-500/10 font-semibold py-2 px-4 rounded-lg transition-colors text-sm disabled:opacity-50"
                   onClick={setPaymentPending}
                   disabled={!linkedPayment || acting || linkedPayment.paymentStatus === "Pending"}
@@ -1212,16 +1237,16 @@ export default function BookingManager() {
           <button className="absolute top-6 right-6 w-10 h-10 rounded-full bg-white/10 text-white hover:bg-white/20 flex items-center justify-center transition-colors backdrop-blur-md" onClick={() => setZoomImage(null)}>
             <span className="material-symbols-outlined">close</span>
           </button>
-          <img 
-            src={zoomImage} 
-            alt="Fullscreen Payment Proof" 
+          <img
+            src={zoomImage}
+            alt="Fullscreen Payment Proof"
             className="max-w-full max-h-full object-contain rounded-lg shadow-2xl"
             onClick={(e) => e.stopPropagation()}
           />
-          <a 
-            href={zoomImage} 
-            download="payment-proof.jpg" 
-            target="_blank" 
+          <a
+            href={zoomImage}
+            download="payment-proof.jpg"
+            target="_blank"
             rel="noopener noreferrer"
             className="absolute bottom-6 right-6 flex items-center gap-2 bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold py-2.5 px-5 rounded-full transition-all shadow-lg shadow-cyan-500/20"
             onClick={(e) => e.stopPropagation()}
@@ -1231,7 +1256,7 @@ export default function BookingManager() {
           </a>
         </div>
       )}
-      
+
       {balanceModal.open && balanceModal.booking && (
         <div className="ad-modal-backdrop" onClick={closeBalanceModal}>
           <div className="ad-modal ad-modal-balance" onClick={(e) => e.stopPropagation()}>
@@ -1271,18 +1296,16 @@ export default function BookingManager() {
                 <div className="ad-action-btns">
                   <button
                     type="button"
-                    className={`ad-btn ad-btn-sm ${
-                      balanceModal.method === "cash" ? "ad-btn-success" : "ad-btn-outline"
-                    }`}
+                    className={`ad-btn ad-btn-sm ${balanceModal.method === "cash" ? "ad-btn-success" : "ad-btn-outline"
+                      }`}
                     onClick={() => setBalanceModal((prev) => ({ ...prev, method: "cash" }))}
                   >
                     Cash
                   </button>
                   <button
                     type="button"
-                    className={`ad-btn ad-btn-sm ${
-                      balanceModal.method === "gcash" ? "ad-btn-success" : "ad-btn-outline"
-                    }`}
+                    className={`ad-btn ad-btn-sm ${balanceModal.method === "gcash" ? "ad-btn-success" : "ad-btn-outline"
+                      }`}
                     onClick={() => setBalanceModal((prev) => ({ ...prev, method: "gcash" }))}
                   >
                     GCash
@@ -1297,12 +1320,12 @@ export default function BookingManager() {
               <button
                 type="button"
                 className="ad-btn ad-btn-success"
-                disabled={acting===balanceModal.booking.id}
+                disabled={acting === balanceModal.booking.id}
                 onClick={() =>
                   settleBalance(balanceModal.booking, balanceModal.amount, balanceModal.method)
                 }
               >
-                {acting===balanceModal.booking.id ? "Saving..." : "Record payment"}
+                {acting === balanceModal.booking.id ? "Saving..." : "Record payment"}
               </button>
             </div>
           </div>
@@ -1310,9 +1333,9 @@ export default function BookingManager() {
       )}
 
       {printData && (
-        <ReceiptPrint 
-          booking={printData.booking} 
-          receiptId={printData.receiptId} 
+        <ReceiptPrint
+          booking={printData.booking}
+          receiptId={printData.receiptId}
           printedBy={printData.printedBy}
           onAfterPrint={() => setPrintData(null)}
         />

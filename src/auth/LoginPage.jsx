@@ -5,6 +5,7 @@ import { doc, getDoc } from "firebase/firestore";
 import { useNavigate } from "react-router-dom";
 import { auth, db } from "../firebase";
 import { grantRegisterAccess } from "./registerAccess";
+import RanawLogo from "../components/RanawLogo";
 
 /** Prefer REACT_APP_ADMIN_REGISTRATION_CODE in env; fallback for local/dev only. */
 function getExpectedAdminCode() {
@@ -92,8 +93,7 @@ export default function LoginPage() {
     <div className="auth-page">
       <div className="auth-left">
         <div className="auth-brand">
-          <div className="auth-brand-icon">🏓</div>
-          <h1 className="auth-brand-name">RANAW PICKLEBALL COURT</h1>
+          <RanawLogo variant="auth" />
           <p className="auth-brand-tagline">Court Reservation Management</p>
         </div>
         <div className="auth-left-features">
@@ -106,6 +106,9 @@ export default function LoginPage() {
 
       <div className="auth-right">
         <div className="auth-card">
+          <div className="auth-card-logo">
+            <RanawLogo variant="authCard" />
+          </div>
           <div className="auth-card-header">
             <h2 className="auth-card-title">Welcome to RANAW PICKLEBALL COURT</h2>
             <p className="auth-card-sub">Book your court with ease</p>

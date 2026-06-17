@@ -7,6 +7,7 @@ import FoodCourtMarketplace from "../marketplace/FoodCourtMarketplace";
 import { subscribeFoodCourtConfig } from "../services/marketplace/foodCourtConfigService";
 import { findActiveBookingForCourt } from "../lib/bookingSession";
 import "../marketplace/marketplace.css";
+import RanawLogo from "../components/RanawLogo";
 
 export default function FoodCourtPage() {
   const { user, profile } = useAuth();
@@ -145,11 +146,14 @@ export default function FoodCourtPage() {
     <div className="min-h-screen bg-slate-950 text-slate-200">
       <header className="sticky top-0 z-20 bg-slate-900/90 backdrop-blur border-b border-slate-800">
         <div className="max-w-3xl mx-auto px-4 py-4 flex items-center justify-between gap-3">
-          <div>
-            <h1 className="text-xl font-bold text-white">{config.title || "Food Court"}</h1>
-            <p className="text-xs text-slate-400 mt-0.5">
-              {config.subtitle || "Order from every stall in one place"}
-            </p>
+          <div className="flex items-center gap-3 min-w-0">
+            <RanawLogo variant="navCompact" className="shrink-0" />
+            <div className="min-w-0">
+              <h1 className="text-xl font-bold text-white truncate">{config.title || "Food Court"}</h1>
+              <p className="text-xs text-slate-400 mt-0.5 truncate">
+                {config.subtitle || "Order from every stall in one place"}
+              </p>
+            </div>
           </div>
           <div className="flex items-center gap-2 shrink-0">
           

@@ -35,24 +35,24 @@ export function tsToDate(ts) {
 }
 
 /**
- * Open / in-progress borrow. Inventory writes "active" or "borrowed"; other apps may use "borrowed" only.
+ * Open / in-progress rent. Inventory writes "active" or "rented"; other apps may use "rented" only.
  * Closed when actualReturnAt is set or status is returned/cancelled.
  */
-export function isBorrowRecordActive(b) {
+export function isRentRecordActive(b) {
   if (!b) return false;
   if (b.actualReturnAt != null) return false;
   const s = b.status;
   if (s === "returned" || s === "cancelled" || s === "Cancelled") return false;
-  return s === "active" || s === "borrowed" || s == null;
+  return s === "active" || s === "rented" || s === "borrowed" || s == null;
 }
 
-export function isOverdueActive(borrow, now = new Date()) {
-  if (!isBorrowRecordActive(borrow)) return false;
-  const exp = tsToDate(borrow.expectedReturnAt);
+export function isOverdueActive(rent, now = new Date()) {
+  if (!isRentRecordActive(rent)) return false;
+  const exp = tsToDate(rent.expectedReturnAt);
   return exp && exp.getTime() < now.getTime();
 }
 
-export function filterBorrowsByBorrowedAtRange(records, start, end) {
+export function filterRentsByRentedAtRange(records, start, end) {
   return records.filter((r) => {
     const t = tsToDate(r.borrowedAt);
     if (!t) return false;
@@ -60,7 +60,7 @@ export function filterBorrowsByBorrowedAtRange(records, start, end) {
   });
 }
 
-export function aggregateMostBorrowed(records, nameById) {
+export function aggregateMostRented(records, nameById) {
   const counts = {};
   for (const r of records) {
     for (const line of r.items || []) {
@@ -88,7 +88,7 @@ function lineItemNameFallback(itemId, records) {
 
 export function filterOverdueInRange(records, start, end) {
   return records.filter((r) => {
-    if (!isBorrowRecordActive(r)) return false;
+    if (!isRentRecordActive(r)) return false;
     if (!isOverdueActive(r)) return false;
     const exp = tsToDate(r.expectedReturnAt);
     return exp && exp >= start && exp <= end;
@@ -115,22 +115,22 @@ export function computeRentalCharge(lines, hours) {
  * Scheduled rental for UI and checkout: prefer stored total (includes extensions from inventory flow);
  * otherwise compute from line items × hoursInitial (external apps often omit estimatedRentalCharge).
  */
-export function getBorrowScheduledRentalCharge(borrow) {
-  if (!borrow) return 0;
-  const raw = borrow.estimatedRentalCharge;
+export function getRentScheduledRentalCharge(rent) {
+  if (!rent) return 0;
+  const raw = rent.estimatedRentalCharge;
   if (raw != null && Number.isFinite(Number(raw)) && Number(raw) > 0) {
     return roundMoney(Number(raw));
   }
-  const lines = borrow.items || [];
-  const h = Number(borrow.hoursInitial) || 0;
+  const lines = rent.items || [];
+  const h = Number(rent.hoursInitial) || 0;
   return computeRentalCharge(lines, h);
 }
 
 /** Initial rental hours + hours added by extensions (for display). */
-export function getBorrowBillableRentalHours(borrow) {
-  if (!borrow) return 0;
-  let h = Number(borrow.hoursInitial) || 0;
-  for (const ex of borrow.extensionHistory || []) {
+export function getRentBillableRentalHours(rent) {
+  if (!rent) return 0;
+  let h = Number(rent.hoursInitial) || 0;
+  for (const ex of rent.extensionHistory || []) {
     h += Number(ex.addedHours) || 0;
   }
   return h;
@@ -140,9 +140,9 @@ export function getBorrowBillableRentalHours(borrow) {
  * Short caption explaining scheduled rent: qty × ₱/hr × billable hours (plus ext note).
  * Does not replace the stored total when extensions exist; clarifies the pricing model.
  */
-export function getBorrowRentalCaption(borrow) {
-  const items = borrow?.items || [];
-  const h0 = Number(borrow?.hoursInitial) || 0;
+export function getRentRentalCaption(rent) {
+  const items = rent?.items || [];
+  const h0 = Number(rent?.hoursInitial) || 0;
   if (!items.length || h0 <= 0) return null;
   const lineBits = [];
   for (const l of items) {
@@ -154,7 +154,7 @@ export function getBorrowRentalCaption(borrow) {
   }
   if (!lineBits.length) return null;
   let s = lineBits.join(" + ");
-  const extH = (borrow.extensionHistory || []).reduce((a, ex) => a + (Number(ex.addedHours) || 0), 0);
+  const extH = (rent.extensionHistory || []).reduce((a, ex) => a + (Number(ex.addedHours) || 0), 0);
   if (extH > 0) {
     s += ` + same rate × ${extH}h extension`;
   }

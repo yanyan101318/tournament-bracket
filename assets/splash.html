@@ -17,8 +17,13 @@
       user-select: none;
       -webkit-app-region: drag;
     }
-    .logo { font-size: 3.2rem; margin-bottom: 1rem;
-      filter: drop-shadow(0 0 18px rgba(200,230,58,0.55)); }
+    .logo { margin-bottom: 1rem; }
+    .logo img {
+      width: min(280px, 72vw);
+      height: auto;
+      display: block;
+      filter: drop-shadow(0 0 18px rgba(124, 58, 237, 0.45));
+    }
     .app-name {
       font-size: 1.35rem; font-weight: 800;
       letter-spacing: 0.14em; color: #c8e63a;
@@ -43,8 +48,8 @@
   </style>
 </head>
 <body>
-  <div class="logo">🏓</div>
-  <div class="app-name">Pickleball System</div>
+  <div class="logo"><img src="ranaw-logo.png" alt="RANAW Pickleball Court" /></div>
+  <div class="app-name">RANAW Pickleball Court</div>
   <div class="app-sub">Management Suite — Loading</div>
   <div class="track"><div class="bar"></div></div>
   <div class="ver">v1.0.0 · Powered by Firebase</div>

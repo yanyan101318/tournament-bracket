@@ -24,7 +24,7 @@ function truncate(str, max) {
 function drawBrandedHeader(doc, titleLine, subtitleLine) {
   doc.setFillColor(10, 15, 24);
   doc.rect(0, 0, PAGE_W, 34, "F");
-  doc.setDrawColor(34, 211, 238);
+  doc.setDrawColor(124, 58, 237);
   doc.setLineWidth(0.4);
   doc.line(0, 34, PAGE_W, 34);
   doc.setTextColor(255, 255, 255);

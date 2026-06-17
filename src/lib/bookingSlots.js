@@ -7,58 +7,84 @@ export const TIME_SLOTS = [
 
 export const EXTEND_OPTIONS = [0.5, 1, 1.5, 2];
 
-export function slotStartIndex(timeSlot) {
-  const i = TIME_SLOTS.indexOf(timeSlot);
-  return i >= 0 ? i : -1;
-}
-
-/** Each listed slot is one hour; duration uses wall-clock hours (ceil to whole slots). */
-export function hoursToOccupiedSlotCount(durationHours) {
-  const d = Number(durationHours);
-  if (!Number.isFinite(d) || d <= 0) return 1;
-  return Math.max(1, Math.ceil(d));
-}
-
-export function occupiedSlotIndices(timeSlot, durationHours) {
-  const start = slotStartIndex(timeSlot);
-  if (start < 0) return [];
-  const n = hoursToOccupiedSlotCount(durationHours);
-  const out = [];
-  for (let j = 0; j < n; j++) out.push(start + j);
-  return out;
-}
-
-export function indicesOverlap(a, b) {
-  const setA = new Set(a);
-  for (const x of b) {
-    if (setA.has(x)) return true;
+/** Convert a time string like "02:30 PM" or "14:30" to minutes from midnight */
+export function timeToMinutes(timeStr) {
+  if (!timeStr) return 0;
+  const str = String(timeStr).trim();
+  const match12 = str.match(/^(\d{1,2}):(\d{2})\s*([AP]M)$/i);
+  if (match12) {
+    let hh = parseInt(match12[1], 10) % 12;
+    const mm = parseInt(match12[2], 10);
+    const ap = match12[3].toUpperCase();
+    if (ap === "PM") hh += 12;
+    return hh * 60 + mm;
   }
-  return false;
+  const match24 = str.match(/^(\d{1,2}):(\d{2})$/);
+  if (match24) {
+    return parseInt(match24[1], 10) * 60 + parseInt(match24[2], 10);
+  }
+  return 0;
 }
 
-/** pending / approved bookings count as holding the court (case-insensitive). */
+/** Convert minutes from midnight to a 12-hour time string like "02:30 PM" */
+export function minutesToTime(minutes) {
+  const m = Math.round(minutes);
+  let hh = Math.floor(m / 60) % 24;
+  const mm = m % 60;
+  const ap = hh >= 12 ? "PM" : "AM";
+  hh = hh % 12 || 12;
+  const hhStr = String(hh).padStart(2, "0");
+  const mmStr = String(mm).padStart(2, "0");
+  return `${hhStr}:${mmStr} ${ap}`;
+}
+
+export function calculateEndTime(startTime, durationHours) {
+  const startMins = timeToMinutes(startTime);
+  const endMins = startMins + durationHours * 60;
+  return minutesToTime(endMins);
+}
+
+/** pending / approved / ongoing bookings count as holding the court (case-insensitive). */
 export function isActiveBookingStatus(status) {
   const x = String(status || "").toLowerCase();
-  return x === "pending" || x === "approved";
+  return x === "pending" || x === "approved" || x === "ongoing";
 }
 
 /**
  * True if the user can start a new booking at `timeSlot` for `durationHours` without
  * overlapping any existing same-court, same-day booking.
  */
-export function isSlotStartAvailableForDuration(timeSlot, durationHours, existingBookings) {
-  const mine = occupiedSlotIndices(timeSlot, durationHours);
-  if (mine.length === 0) return false;
-  const start = slotStartIndex(timeSlot);
-  if (start < 0) return false;
-  if (start + mine.length > TIME_SLOTS.length) return false;
+export function isSlotStartAvailableForDuration(timeSlot, durationHours, existingBookings, excludeBookingId = null) {
+  const newStart = timeToMinutes(timeSlot);
+  if (newStart === 0) return false; // Invalid start time
+  const newEnd = newStart + durationHours * 60;
+
   for (const ob of existingBookings) {
     if (!ob) continue;
+    if (excludeBookingId && ob.id === excludeBookingId) continue;
     if (!isActiveBookingStatus(ob.status)) continue;
-    const oidx = occupiedSlotIndices(ob.timeSlot, ob.duration ?? 1);
-    if (oidx.length && indicesOverlap(mine, oidx)) return false;
+
+    const obStart = timeToMinutes(ob.startTime || ob.timeSlot);
+    const obDuration = Number(ob.duration) || 1;
+    const obEnd = obStart + obDuration * 60;
+
+    // Overlap condition: new booking starts before existing ends AND new booking ends after existing starts
+    if (newStart < obEnd && newEnd > obStart) {
+      return false;
+    }
   }
   return true;
+}
+
+export function isSlotWithinCourtHours(timeSlot, durationHours, court) {
+  if (!court) return true;
+  const startMins = timeToMinutes(timeSlot);
+  const endMins = startMins + durationHours * 60;
+  
+  const courtStart = timeToMinutes(court.activeStartTime || "06:00");
+  const courtEnd = timeToMinutes(court.activeEndTime || "22:00");
+  
+  return startMins >= courtStart && endMins <= courtEnd;
 }
 
 /**
@@ -69,7 +95,7 @@ export function isSlotStartAvailableForDuration(timeSlot, durationHours, existin
  * @param {string} p.courtId
  * @param {string} p.date
  * @param {string} p.excludeBookingId
- * @param {Array<{ id: string, courtId?: string, date?: string, timeSlot?: string, duration?: number, status?: string }>} p.others
+ * @param {Array<{ id: string, courtId?: string, date?: string, timeSlot?: string, startTime?: string, duration?: number, status?: string }>} p.others
  */
 export function canExtendBooking(p) {
   const { timeSlot, duration, extendHours, courtId, date, excludeBookingId, others } = p;
@@ -78,22 +104,40 @@ export function canExtendBooking(p) {
     return { ok: false, reason: "Choose a valid extension length." };
   }
   const newDur = Number(duration) + add;
-  const start = slotStartIndex(timeSlot);
-  if (start < 0) return { ok: false, reason: "Invalid start time." };
-  const myIdx = occupiedSlotIndices(timeSlot, newDur);
-  const endExclusive = start + myIdx.length;
-  if (endExclusive > TIME_SLOTS.length) {
-    return { ok: false, reason: "Extension would go past the last available slot." };
+  
+  // Use others to filter same court/date bookings
+  const relevantBookings = (others || []).filter(
+    (ob) => ob.courtId === courtId && ob.date === date
+  );
+
+  if (!isSlotStartAvailableForDuration(timeSlot, newDur, relevantBookings, excludeBookingId)) {
+    return { ok: false, reason: "The extended time overlaps with another booking." };
   }
 
-  for (const ob of others || []) {
-    if (!ob || ob.id === excludeBookingId) continue;
-    if (ob.courtId !== courtId || ob.date !== date) continue;
-    if (!isActiveBookingStatus(ob.status)) continue;
-    const oidx = occupiedSlotIndices(ob.timeSlot, ob.duration ?? 1);
-    if (oidx.length && indicesOverlap(myIdx, oidx)) {
-      return { ok: false, reason: "The next time is already booked." };
+  return { ok: true, newDuration: newDur, newEndTime: calculateEndTime(timeSlot, newDur) };
+}
+
+/**
+ * Returns the effective status of the court (true for active, false for inactive).
+ * Checks if a temporary override is active and hasn't expired.
+ */
+export function getEffectiveCourtStatus(court) {
+  if (!court) return false;
+  
+  if (court.override_expires_at) {
+    const expiresAt = typeof court.override_expires_at.toMillis === "function" 
+      ? court.override_expires_at.toMillis() 
+      : new Date(court.override_expires_at).getTime();
+      
+    if (expiresAt > Date.now()) {
+      return court.override_status === true;
     }
   }
-  return { ok: true, newDuration: newDur, newIndices: myIdx };
+  
+  // Fall back to base_status, or legacy isActive
+  if (typeof court.base_status === "boolean") {
+    return court.base_status;
+  }
+  
+  return court.isActive !== false;
 }

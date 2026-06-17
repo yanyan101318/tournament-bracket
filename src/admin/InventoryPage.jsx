@@ -24,24 +24,24 @@ import {
   getReportRange,
   tsToDate,
   isOverdueActive,
-  filterBorrowsByBorrowedAtRange,
-  aggregateMostBorrowed,
+  filterRentsByRentedAtRange,
+  aggregateMostRented,
   filterOverdueInRange,
-  isBorrowRecordActive,
+  isRentRecordActive,
   computeRentalCharge,
   computeOverdueFine,
   computeLateHours,
   roundMoney,
-  getBorrowScheduledRentalCharge,
-  getBorrowBillableRentalHours,
-  getBorrowRentalCaption,
+  getRentScheduledRentalCharge,
+  getRentBillableRentalHours,
+  getRentRentalCaption,
 } from "./inventoryHelpers";
 import { downloadEquipmentInventoryPdf } from "../lib/adminPdfReports";
 
 const TABS = [
   { id: "dashboard", label: "Dashboard" },
   { id: "catalog", label: "Catalog" },
-  { id: "borrowing", label: "Borrowing" },
+  { id: "borrowing", label: "Renting" },
   { id: "reports", label: "Reports" },
 ];
 
@@ -60,9 +60,9 @@ const BLANK_ITEM = {
   overdueFinePerHour: "",
 };
 
-function BorrowBillableHoursCell({ borrow }) {
-  const total = getBorrowBillableRentalHours(borrow);
-  const initial = Number(borrow.hoursInitial) || 0;
+function RentBillableHoursCell({ rent }) {
+  const total = getRentBillableRentalHours(rent);
+  const initial = Number(rent.hoursInitial) || 0;
   const ext = Math.max(0, total - initial);
   return (
     <td className="text-sm align-top whitespace-nowrap">
@@ -78,9 +78,9 @@ function BorrowBillableHoursCell({ borrow }) {
   );
 }
 
-function BorrowRentalCell({ borrow }) {
-  const amt = getBorrowScheduledRentalCharge(borrow);
-  const cap = getBorrowRentalCaption(borrow);
+function RentRentalCell({ rent }) {
+  const amt = getRentScheduledRentalCharge(rent);
+  const cap = getRentRentalCaption(rent);
   return (
     <td className="text-right align-top">
       <div className="text-xs font-mono text-emerald-400">₱{amt.toFixed(2)}</div>
@@ -96,25 +96,25 @@ function BorrowRentalCell({ borrow }) {
 export default function InventoryPage() {
   const [tab, setTab] = useState("dashboard");
   const [items, setItems] = useState([]);
-  const [borrows, setBorrows] = useState([]);
+  const [rents, setRents] = useState([]);
   const [loading, setLoading] = useState(true);
 
   // Pagination: one state per table
   const PAGE_SIZE = 10;
-  const [dashBorrowPage, setDashBorrowPage] = useState(1);
+  const [dashRentPage, setDashRentPage] = useState(1);
   const [catalogPage, setCatalogPage] = useState(1);
-  const [activeBorrowPage, setActiveBorrowPage] = useState(1);
+  const [activeRentPage, setActiveRentPage] = useState(1);
   const [historyPage, setHistoryPage] = useState(1);
 
-  function handleTabChange(t) { setTab(t); setDashBorrowPage(1); setCatalogPage(1); setActiveBorrowPage(1); setHistoryPage(1); }
+  function handleTabChange(t) { setTab(t); setDashRentPage(1); setCatalogPage(1); setActiveRentPage(1); setHistoryPage(1); }
 
   const [itemModal, setItemModal] = useState(null);
   const [itemForm, setItemForm] = useState(BLANK_ITEM);
   const { syncState, wrapSync } = useOfflineSync();
 
-  const [borrowerName, setBorrowerName] = useState("");
-  const [borrowHours, setBorrowHours] = useState(2);
-  const [borrowLines, setBorrowLines] = useState([{ itemId: "", quantity: 1 }]);
+  const [renterName, setRenterName] = useState("");
+  const [rentHours, setRentHours] = useState(2);
+  const [rentLines, setRentLines] = useState([{ itemId: "", quantity: 1 }]);
 
   const [extendModal, setExtendModal] = useState(null);
   const [extendHours, setExtendHours] = useState(1);
@@ -137,7 +137,7 @@ export default function InventoryPage() {
     );
     const qb = query(collection(db, "borrowRecords"), orderBy("borrowedAt", "desc"));
     const unsubB = onSnapshot(qb, { includeMetadataChanges: true }, (snap) => {
-      setBorrows(snap.docs.map((d) => ({ id: d.id, hasPendingWrites: d.metadata.hasPendingWrites, ...d.data() })));
+      setRents(snap.docs.map((d) => ({ id: d.id, hasPendingWrites: d.metadata.hasPendingWrites, ...d.data() })));
     });
     return () => {
       unsubI();
@@ -151,24 +151,24 @@ export default function InventoryPage() {
     return m;
   }, [items]);
 
-  const borrowPreviewLines = useMemo(() => {
-    return borrowLines
+  const rentPreviewLines = useMemo(() => {
+    return rentLines
       .filter((l) => l.itemId)
       .map((l) => ({
         quantity: Math.max(1, Math.floor(Number(l.quantity) || 1)),
         pricePerHour: Number(itemsById[l.itemId]?.pricePerHour) || 0,
         overdueFinePerHour: Number(itemsById[l.itemId]?.overdueFinePerHour) || 0,
       }));
-  }, [borrowLines, itemsById]);
+  }, [rentLines, itemsById]);
 
   const borrowPreviewRental = useMemo(
-    () => computeRentalCharge(borrowPreviewLines, borrowHours),
-    [borrowPreviewLines, borrowHours]
+    () => computeRentalCharge(rentPreviewLines, rentHours),
+    [rentPreviewLines, rentHours]
   );
 
   const activeBorrows = useMemo(
-    () => borrows.filter(isBorrowRecordActive),
-    [borrows]
+    () => rents.filter(isRentRecordActive),
+    [rents]
   );
 
   const overdueList = useMemo(
@@ -199,18 +199,18 @@ export default function InventoryPage() {
   );
 
   const reportFilteredBorrows = useMemo(
-    () => filterBorrowsByBorrowedAtRange(borrows, reportRange.start, reportRange.end),
-    [borrows, reportRange]
+    () => filterRentsByRentedAtRange(rents, reportRange.start, reportRange.end),
+    [rents, reportRange]
   );
 
   const mostBorrowedReport = useMemo(
-    () => aggregateMostBorrowed(reportFilteredBorrows, nameById),
+    () => aggregateMostRented(reportFilteredBorrows, nameById),
     [reportFilteredBorrows, nameById]
   );
 
   const overdueInReportPeriod = useMemo(
-    () => filterOverdueInRange(borrows, reportRange.start, reportRange.end),
-    [borrows, reportRange]
+    () => filterOverdueInRange(rents, reportRange.start, reportRange.end),
+    [rents, reportRange]
   );
 
   const hasActiveBorrowForItem = useCallback(
@@ -300,7 +300,7 @@ export default function InventoryPage() {
 
   async function removeItem(it) {
     if (hasActiveBorrowForItem(it.id)) {
-      toast.error("Return all active borrows for this item before deleting.");
+      toast.error("Return all active rents for this item before deleting.");
       return;
     }
     if (!window.confirm(`Delete “${it.name}”?`)) return;
@@ -316,11 +316,11 @@ export default function InventoryPage() {
   }
 
   function addBorrowLine() {
-    setBorrowLines((lines) => [...lines, { itemId: "", quantity: 1 }]);
+    setRentLines((lines) => [...lines, { itemId: "", quantity: 1 }]);
   }
 
   function setBorrowLine(i, k, v) {
-    setBorrowLines((lines) => {
+    setRentLines((lines) => {
       const next = [...lines];
       next[i] = { ...next[i], [k]: v };
       return next;
@@ -328,18 +328,18 @@ export default function InventoryPage() {
   }
 
   function removeBorrowLine(i) {
-    setBorrowLines((lines) => lines.filter((_, j) => j !== i));
+    setRentLines((lines) => lines.filter((_, j) => j !== i));
   }
 
   async function submitBorrow(e) {
     e.preventDefault();
-    const name = borrowerName.trim();
+    const name = renterName.trim();
     if (!name) {
       toast.error("Borrower name is required");
       return;
     }
-    const hours = Math.max(0.5, Number(borrowHours) || 0);
-    const lines = borrowLines
+    const hours = Math.max(0.5, Number(rentHours) || 0);
+    const lines = rentLines
       .filter((l) => l.itemId)
       .map((l) => {
         const stock = itemsById[l.itemId];
@@ -391,14 +391,14 @@ export default function InventoryPage() {
       }
 
       await wrapSync(batch.commit(), {
-        successMsg: "Borrow recorded",
+        successMsg: "Rent recorded",
         offlineMsg: "Borrow Saved Offline — Pending Server Sync",
         errorMsg: "Borrow failed — check Firestore rules and stock."
       });
 
-      setBorrowerName("");
-      setBorrowHours(2);
-      setBorrowLines([{ itemId: "", quantity: 1 }]);
+      setRenterName("");
+      setRentHours(2);
+      setRentLines([{ itemId: "", quantity: 1 }]);
     } catch (err) {
       console.error(err);
     }
@@ -411,7 +411,7 @@ export default function InventoryPage() {
       snap = await getDoc(ref);
     } catch (e) {
       console.error(e);
-      toast.error("Could not load borrow record");
+      toast.error("Could not load rent record");
       return;
     }
     if (!snap.exists()) return;
@@ -419,7 +419,7 @@ export default function InventoryPage() {
     const actualTs = Timestamp.now();
     const lateH = computeLateHours(data.expectedReturnAt, actualTs.toMillis());
     const lines = data.items || [];
-    const rentalCharge = getBorrowScheduledRentalCharge(data);
+    const rentalCharge = getRentScheduledRentalCharge(data);
     const overdueCharge = computeOverdueFine(lines, lateH);
     const totalCharge = roundMoney(rentalCharge + overdueCharge);
     const confirmMsg =
@@ -472,7 +472,7 @@ export default function InventoryPage() {
       const newMs = prevMs + hours * 3600 * 1000;
       const lines = data.items || [];
       const extraRental = computeRentalCharge(lines, hours);
-      const baseRental = getBorrowScheduledRentalCharge(data);
+      const baseRental = getRentScheduledRentalCharge(data);
       const entry = {
         at: Timestamp.now(),
         previousExpectedReturn: prevExp,
@@ -488,7 +488,7 @@ export default function InventoryPage() {
       });
 
       await wrapSync(promise, {
-        successMsg: "Borrowing time extended",
+        successMsg: "Renting time extended",
         offlineMsg: "Extension Saved Offline",
         errorMsg: "Extension failed"
       });
@@ -514,7 +514,7 @@ export default function InventoryPage() {
         <div>
           <h1 className="ad-page-title">Equipment</h1>
           <p className="ad-page-sub">
-            Rental catalog, borrows, and overdue tracking for paddles, balls, and other gear.
+            Rental catalog, rents, and overdue tracking for paddles, balls, and other gear.
           </p>
         </div>
         <div className="flex flex-wrap gap-2 shrink-0">
@@ -549,7 +549,7 @@ export default function InventoryPage() {
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
             <StatMini label="SKU count" value={stats.totalSkus} tone="slate" icon="inventory_2" />
             <StatMini label="Available units" value={stats.availableUnits} tone="emerald" icon="check_circle" />
-            <StatMini label="Active borrows" value={stats.activeCount} tone="sky" icon="schedule" />
+            <StatMini label="Active rents" value={stats.activeCount} tone="sky" icon="schedule" />
             <StatMini label="Overdue" value={stats.overdueCount} tone="amber" icon="warning" />
           </div>
 
@@ -560,7 +560,7 @@ export default function InventoryPage() {
             </div>
             <div className="p-0">
               {activeBorrows.length === 0 ? (
-                <p className="p-6 text-sm text-[var(--ad-muted)] text-center">No active borrows.</p>
+                <p className="p-6 text-sm text-[var(--ad-muted)] text-center">No active rents.</p>
               ) : (
                 <div className="overflow-x-auto">
                   <table className="ad-table">
@@ -579,7 +579,7 @@ export default function InventoryPage() {
                       </tr>
                     </thead>
                     <tbody>
-                      {activeBorrows.slice((dashBorrowPage - 1) * PAGE_SIZE, dashBorrowPage * PAGE_SIZE).map((b) => (
+                      {activeBorrows.slice((dashRentPage - 1) * PAGE_SIZE, dashRentPage * PAGE_SIZE).map((b) => (
                         <tr key={b.id}>
                           <td className="ad-td-main font-semibold">
                             <div className="flex items-center gap-2">
@@ -607,8 +607,8 @@ export default function InventoryPage() {
                               <span className="ml-1 text-[10px] uppercase text-amber-500">overdue</span>
                             )}
                           </td>
-                          <BorrowBillableHoursCell borrow={b} />
-                          <BorrowRentalCell borrow={b} />
+                          <RentBillableHoursCell rent={b} />
+                          <RentRentalCell rent={b} />
                           <td className="text-right text-xs font-mono">
                             {isOverdueActive(b)
                               ? `₱${computeOverdueFine(b.items || [], computeLateHours(b.expectedReturnAt)).toFixed(2)}`
@@ -641,9 +641,9 @@ export default function InventoryPage() {
                 </div>
               )}
               <Pagination
-                page={dashBorrowPage}
+                page={dashRentPage}
                 totalPages={Math.max(1, Math.ceil(activeBorrows.length / PAGE_SIZE))}
-                onPage={setDashBorrowPage}
+                onPage={setDashRentPage}
               />
             </div>
           </div>
@@ -783,15 +783,15 @@ export default function InventoryPage() {
       {tab === "borrowing" && (
         <section className="grid lg:grid-cols-1 gap-6">
           <div className="ad-card p-4 sm:p-6">
-            <h3 className="text-base font-bold text-[var(--ad-text)] mb-4">New borrow</h3>
+            <h3 className="text-base font-bold text-[var(--ad-text)] mb-4">New rent</h3>
             <form onSubmit={submitBorrow} className="space-y-4 max-w-2xl">
               <div className="grid sm:grid-cols-2 gap-4">
                 <div className="af-group">
                   <label className="af-label">Borrower / account name *</label>
                   <input
                     className="af-input"
-                    value={borrowerName}
-                    onChange={(e) => setBorrowerName(e.target.value)}
+                    value={renterName}
+                    onChange={(e) => setRenterName(e.target.value)}
                     placeholder="Player or member name"
                     required
                   />
@@ -803,8 +803,8 @@ export default function InventoryPage() {
                     type="number"
                     min={1}
                     step={1}
-                    value={borrowHours}
-                    onChange={(e) => setBorrowHours(Number(e.target.value))}
+                    value={rentHours}
+                    onChange={(e) => setRentHours(Number(e.target.value))}
                   />
                 </div>
               </div>
@@ -816,7 +816,7 @@ export default function InventoryPage() {
                   </button>
                 </div>
                 <div className="space-y-2">
-                  {borrowLines.map((line, i) => (
+                  {rentLines.map((line, i) => (
                     <div key={i} className="flex flex-wrap gap-2 items-end">
                       <select
                         className="af-input flex-1 min-w-[160px]"
@@ -837,7 +837,7 @@ export default function InventoryPage() {
                         value={line.quantity}
                         onChange={(e) => setBorrowLine(i, "quantity", e.target.value)}
                       />
-                      {borrowLines.length > 1 && (
+                      {rentLines.length > 1 && (
                         <button
                           type="button"
                           className="ad-btn ad-btn-sm ad-btn-outline"
@@ -852,13 +852,13 @@ export default function InventoryPage() {
               </div>
               <div className="rounded-xl border border-[var(--ad-border)] bg-[var(--ad-surface)] p-4 max-w-lg">
                 <div className="text-[10px] font-bold uppercase tracking-wider text-[var(--ad-muted)]">
-                  Estimated rental (this borrow)
+                  Estimated rental (this rent)
                 </div>
                 <div className="text-2xl font-black text-[var(--ad-pickle)] mt-1">
                   ₱{borrowPreviewRental.toFixed(2)}
                 </div>
                 <div className="mt-3 space-y-1.5 border-t border-[var(--ad-border)] pt-3">
-                  {borrowLines
+                  {rentLines
                     .map((line, idx) => ({ line, idx }))
                     .filter(({ line }) => line.itemId)
                     .map(({ line, idx }) => {
@@ -866,7 +866,7 @@ export default function InventoryPage() {
                       const name = stock?.name ?? "Item";
                       const q = Math.max(1, Math.floor(Number(line.quantity) || 1));
                       const p = Number(stock?.pricePerHour) || 0;
-                      const sub = roundMoney(q * p * borrowHours);
+                      const sub = roundMoney(q * p * rentHours);
                       return (
                         <div
                           key={`${line.itemId}-${idx}`}
@@ -874,12 +874,12 @@ export default function InventoryPage() {
                         >
                           <span className="text-[var(--ad-muted)]">{name}</span>
                           <span className="font-mono text-[var(--ad-text)]">
-                            {q}×₱{p.toFixed(2)}/hr×{borrowHours}h = ₱{sub.toFixed(2)}
+                            {q}×₱{p.toFixed(2)}/hr×{rentHours}h = ₱{sub.toFixed(2)}
                           </span>
                         </div>
                       );
                     })}
-                  {borrowPreviewLines.length === 0 && (
+                  {rentPreviewLines.length === 0 && (
                     <p className="text-[11px] text-[var(--ad-muted)]">Select items and quantities to see the breakdown.</p>
                   )}
                 </div>
@@ -889,14 +889,14 @@ export default function InventoryPage() {
                 </p>
               </div>
               <button type="submit" className="ad-btn ad-btn-primary" disabled={syncState !== "idle" && syncState !== "error"}>
-                {syncState === "syncing" ? "Saving…" : syncState === "offline-saved" ? "Saved Offline" : "Record borrow"}
+                {syncState === "syncing" ? "Saving…" : syncState === "offline-saved" ? "Saved Offline" : "Record rent"}
               </button>
             </form>
           </div>
 
           <div className="ad-card overflow-hidden">
             <div className="ad-card-header">
-              <h3 className="ad-card-title">Active borrows</h3>
+              <h3 className="ad-card-title">Active rents</h3>
             </div>
             <div className="overflow-x-auto">
               <table className="ad-table">
@@ -917,15 +917,15 @@ export default function InventoryPage() {
                   {activeBorrows.length === 0 ? (
                     <tr>
                       <td colSpan={7} className="ad-empty">
-                        No active borrows.
+                        No active rents.
                       </td>
                     </tr>
                   ) : (
-                    activeBorrows.slice((activeBorrowPage - 1) * PAGE_SIZE, activeBorrowPage * PAGE_SIZE).map((b) => (
+                    activeBorrows.slice((activeRentPage - 1) * PAGE_SIZE, activeRentPage * PAGE_SIZE).map((b) => (
                       <tr key={b.id}>
                         <td className="ad-td-main">
                           <div className="flex items-center gap-2">
-                            {b.borrowerName}
+                            {b.renterName}
                             {b.hasPendingWrites && <span className="ad-badge ad-badge-pending text-[10px] px-1 py-0 border border-amber-500/20">Pending Sync</span>}
                           </div>
                         </td>
@@ -935,8 +935,8 @@ export default function InventoryPage() {
                         <td className="text-sm whitespace-nowrap">
                           {format(tsToDate(b.expectedReturnAt) || new Date(), "MMM d, yyyy h:mm a")}
                         </td>
-                        <BorrowBillableHoursCell borrow={b} />
-                        <BorrowRentalCell borrow={b} />
+                        <RentBillableHoursCell rent={b} />
+                        <RentRentalCell rent={b} />
                         <td className="text-sm text-[var(--ad-muted)]">
                           {(b.extensionHistory || []).length}
                         </td>
@@ -967,9 +967,9 @@ export default function InventoryPage() {
               </table>
             </div>
             <Pagination
-              page={activeBorrowPage}
+              page={activeRentPage}
               totalPages={Math.max(1, Math.ceil(activeBorrows.length / PAGE_SIZE))}
-              onPage={setActiveBorrowPage}
+              onPage={setActiveRentPage}
             />
           </div>
         </section>
@@ -996,7 +996,7 @@ export default function InventoryPage() {
 
           <div className="ad-card overflow-hidden">
             <div className="ad-card-header">
-              <h3 className="ad-card-title">Borrowing history ({reportFilteredBorrows.length})</h3>
+              <h3 className="ad-card-title">Renting history ({reportFilteredBorrows.length})</h3>
             </div>
             <div className="overflow-x-auto max-h-80">
               <table className="ad-table">
@@ -1016,13 +1016,13 @@ export default function InventoryPage() {
                   {reportFilteredBorrows.length === 0 ? (
                     <tr>
                       <td colSpan={8} className="ad-empty">
-                        No borrows in this period.
+                        No rents in this period.
                       </td>
                     </tr>
                   ) : (
                     reportFilteredBorrows.slice((historyPage - 1) * PAGE_SIZE, historyPage * PAGE_SIZE).map((b) => (
                       <tr key={b.id}>
-                        <td className="ad-td-main">{b.borrowerName}</td>
+                        <td className="ad-td-main">{b.renterName}</td>
                         <td className="text-sm">
                           {(b.items || []).map((l) => `${l.itemName} ×${l.quantity}`).join(", ")}
                         </td>
@@ -1086,7 +1086,7 @@ export default function InventoryPage() {
             <div className="ad-card p-4">
               <h4 className="text-sm font-bold mb-3">Overdue snapshots (due date in period)</h4>
               <p className="text-xs text-[var(--ad-muted)] mb-2">
-                Active borrows whose expected return fell in this window and are past due.
+                Active rents whose expected return fell in this window and are past due.
               </p>
               <ul className="space-y-2 text-sm max-h-56 overflow-y-auto custom-scrollbar">
                 {overdueInReportPeriod.length === 0 ? (
@@ -1094,7 +1094,7 @@ export default function InventoryPage() {
                 ) : (
                   overdueInReportPeriod.map((b) => (
                     <li key={b.id} className="border border-[var(--ad-border)] rounded p-2">
-                      <div className="font-semibold">{b.borrowerName}</div>
+                      <div className="font-semibold">{b.renterName}</div>
                       <div className="text-xs text-amber-400">
                         Was due {format(tsToDate(b.expectedReturnAt) || new Date(), "MMM d, yyyy HH:mm")}
                       </div>
@@ -1209,7 +1209,7 @@ export default function InventoryPage() {
             <div className="ad-modal-form">
               <p className="text-sm text-[var(--ad-muted)] mb-2">
                 Add hours after the current expected return time for{" "}
-                <strong className="text-[var(--ad-text)]">{extendModal.borrowerName}</strong>.
+                <strong className="text-[var(--ad-text)]">{extendModal.renterName}</strong>.
               </p>
               <div className="af-group">
                 <label className="af-label">Additional hours</label>

@@ -3,6 +3,8 @@ import { useState, useEffect, useMemo } from "react";
 import { collection, getDocs, query, where } from "firebase/firestore";
 import { format } from "date-fns";
 import { db } from "../firebase";
+import { Download, Loader2, CheckCircle, AlertCircle } from "lucide-react";
+import { generateAnalyticsExcel } from "../utils/export/AnalyticsExcelGenerator";
 
 const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const BAR_ACCENT = [
@@ -58,6 +60,20 @@ export default function Analytics() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [fetchedAt, setFetchedAt] = useState(null);
+  const [exportStatus, setExportStatus] = useState("idle");
+
+  const handleExport = async () => {
+    try {
+      setExportStatus("loading");
+      await generateAnalyticsExcel(data);
+      setExportStatus("success");
+      setTimeout(() => setExportStatus("idle"), 3000);
+    } catch (err) {
+      console.error(err);
+      setExportStatus("error");
+      setTimeout(() => setExportStatus("idle"), 5000);
+    }
+  };
 
   useEffect(() => {
     async function fetchData() {
@@ -204,7 +220,7 @@ export default function Analytics() {
   return (
     <div className="ad-page">
       <section className="an-hero" aria-label="Analytics overview">
-        <div className="an-hero-inner">
+        <div className="an-hero-inner flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
           <div>
             <div className="an-hero-title-row">
               <div className="an-hero-icon" aria-hidden>
@@ -229,6 +245,17 @@ export default function Analytics() {
               )}
             </div>
           </div>
+          
+          <button
+            onClick={handleExport}
+            disabled={exportStatus === "loading"}
+            className="inline-flex items-center justify-center px-4 py-2 text-sm font-medium rounded-md transition-all duration-200 bg-slate-800 text-slate-200 hover:bg-slate-700 hover:text-white border border-slate-600/50 hover:border-slate-500 hover:shadow-lg focus:outline-none disabled:opacity-50 shrink-0"
+          >
+            {exportStatus === "loading" && <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Exporting...</>}
+            {exportStatus === "success" && <><CheckCircle className="w-4 h-4 mr-2 text-green-400" /> Exported!</>}
+            {exportStatus === "error" && <><AlertCircle className="w-4 h-4 mr-2 text-red-400" /> Error</>}
+            {exportStatus === "idle" && <><Download className="w-4 h-4 mr-2" /> Export Dashboard</>}
+          </button>
         </div>
       </section>
 

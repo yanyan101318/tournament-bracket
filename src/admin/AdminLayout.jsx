@@ -6,29 +6,30 @@ import { db } from "../firebase";
 import toast from "react-hot-toast";
 import { useAuth } from "../auth/AuthContext";
 import OfflinePreloader from "./OfflinePreloader";
+import RanawLogo from "../components/RanawLogo";
 
 const NAV_LINKS = [
-  { to: "/admin/dashboard",   label: "Dashboard"    },
-  { to: "/admin/schedule",    label: "Schedule"     },
-  { to: "/admin/courts",      label: "Courts"        },
+  { to: "/admin/dashboard", label: "Dashboard" },
+  { to: "/admin/schedule", label: "Schedule" },
+  { to: "/admin/courts", label: "Courts" },
 ];
 
 const BOOKING_SUBLINKS = [
-  { to: "/admin/bookings",    label: "Bookings"      },
-  { to: "/admin/new-booking", label: "New booking"  },
-  { to: "/admin/crm",        label: "CRM"           },
-  { to: "/admin/memberships", label: "Memberships"   },
+  { to: "/admin/bookings", label: "Bookings" },
+  { to: "/admin/new-booking", label: "New booking" },
+  { to: "/admin/crm", label: "CRM" },
+  { to: "/admin/memberships", label: "Memberships" },
 ];
 
 const TOURNAMENT_SUBLINKS = [
-  { to: "/admin/tournament",   label: "Tournament bracket" },
-  { to: "/admin/paddle-stack", label: "Paddle stacking"   },
+  { to: "/admin/tournament", label: "Tournament bracket" },
+  { to: "/admin/paddle-stack", label: "Paddle stacking" },
 ];
 
 const NAV_LINKS_AFTER_TOURNAMENT = [
   { to: "/admin/announcements", label: "Announcements" },
-  { to: "/admin/analytics",   label: "Analytics"     },
-  { to: "/admin/equipment",   label: "Equipment"       },
+  { to: "/admin/analytics", label: "Analytics" },
+  { to: "/admin/equipment", label: "Equipment" },
 ];
 
 const SALES_DROPDOWN_LINKS = [
@@ -38,7 +39,6 @@ const SALES_DROPDOWN_LINKS = [
 
 const MARKETPLACE_DROPDOWN_LINKS = [
   { to: "/admin/vendors", label: "Vendor stores" },
-  { to: "/admin/vendor-settlements", label: "Settlements" },
 ];
 
 export default function AdminLayout() {
@@ -222,38 +222,29 @@ export default function AdminLayout() {
   return (
     <div className="min-h-screen bg-[#0a0f18]">
       {/* TOP NAVIGATION — sticky + safe-area; mobile uses hamburger drawer (lg+ shows inline links) */}
-      <nav className="sticky top-0 z-[100] bg-[#0a0f18]/95 backdrop-blur-xl border-b border-slate-800 px-3 sm:px-4 py-2.5 pt-[max(0.625rem,env(safe-area-inset-top))]">
-        <div className="max-w-[1600px] mx-auto flex items-center justify-between gap-2 min-h-[48px]">
+      <nav className="sticky top-0 z-[100] bg-[#0a0f18]/95 backdrop-blur-xl border-b border-slate-800 px-3 sm:px-4 py-2.5 sm:py-3 pt-[max(0.625rem,env(safe-area-inset-top))]">
+        <div className="max-w-[1600px] mx-auto flex items-center justify-between gap-2 min-h-[52px] sm:min-h-[56px]">
           <div className="flex items-center gap-2 sm:gap-6 min-w-0 flex-1">
             <button
               type="button"
-              className="lg:hidden shrink-0 -ml-1 p-2 rounded-lg text-slate-200 hover:bg-slate-800/80 active:bg-slate-800"
+              className="xl:hidden shrink-0 -ml-1 p-2 rounded-lg text-slate-200 hover:bg-slate-800/80 active:bg-slate-800"
               onClick={() => setMobileMenuOpen(true)}
               aria-label="Open navigation menu"
             >
               <span className="material-symbols-outlined text-[28px] leading-none">menu</span>
             </button>
-            <div className="flex items-center gap-2 min-w-0 group cursor-pointer">
-              <div className="w-8 h-8 shrink-0 bg-gradient-to-br from-[#00f2ff] to-[#0088ff] rounded-lg flex items-center justify-center shadow-lg cyan-glow">
-                <span className="material-symbols-outlined text-slate-900 font-bold text-sm">sports_tennis</span>
-              </div>
-              <div className="flex flex-col min-w-0">
-                <span className="text-sm sm:text-lg font-black text-white tracking-tight truncate">RANAW PICKLEBALL COURT</span>
-                <span className="text-[8px] sm:text-[9px] text-cyan-400 font-bold tracking-[0.15em] sm:tracking-[0.2em] uppercase truncate">
-                  Court Reservation Management
-                </span>
-              </div>
+            <div className="flex items-center gap-2 group cursor-pointer shrink-0">
+              <RanawLogo variant="nav" className="shrink-0" />
             </div>
-            <div className="hidden lg:flex items-center gap-6 ml-6">
+            <div className="hidden xl:flex items-center xl:gap-3.5 2xl:gap-6 xl:ml-4 2xl:ml-6">
               {NAV_LINKS.map((item) => (
                 <NavLink
                   key={item.to}
                   to={item.to}
                   className={({ isActive }) =>
-                    `text-xs font-medium transition-colors ${
-                      isActive
-                        ? "nav-link-active text-cyan-400"
-                        : "nav-link text-slate-400 hover:text-cyan-400"
+                    `text-xs font-medium transition-colors ${isActive
+                      ? "nav-link-active text-cyan-400"
+                      : "nav-link text-slate-400 hover:text-cyan-400"
                     }`
                   }
                 >
@@ -263,11 +254,10 @@ export default function AdminLayout() {
               <div className="relative" ref={bookingRef}>
                 <button
                   type="button"
-                  className={`text-xs font-medium transition-colors flex items-center gap-0.5 ${
-                    bookingNavActive || bookingOpen
+                  className={`text-xs font-medium transition-colors flex items-center gap-0.5 ${bookingNavActive || bookingOpen
                       ? "nav-link-active text-cyan-400"
                       : "nav-link text-slate-400 hover:text-cyan-400"
-                  }`}
+                    }`}
                   onClick={() => {
                     setTournamentOpen(false);
                     setSalesOpen(false);
@@ -288,10 +278,9 @@ export default function AdminLayout() {
                         key={s.to}
                         to={s.to}
                         className={({ isActive }) =>
-                          `block px-4 py-2.5 text-xs font-medium transition-colors ${
-                            isActive
-                              ? "bg-slate-800/80 text-cyan-400"
-                              : "text-slate-300 hover:bg-slate-800 hover:text-white"
+                          `block px-4 py-2.5 text-xs font-medium transition-colors ${isActive
+                            ? "bg-slate-800/80 text-cyan-400"
+                            : "text-slate-300 hover:bg-slate-800 hover:text-white"
                           }`
                         }
                         onClick={() => setBookingOpen(false)}
@@ -308,11 +297,10 @@ export default function AdminLayout() {
               >
                 <button
                   type="button"
-                  className={`text-xs font-medium transition-colors flex items-center gap-0.5 ${
-                    salesNavActive || salesOpen
+                  className={`text-xs font-medium transition-colors flex items-center gap-0.5 ${salesNavActive || salesOpen
                       ? "nav-link-active text-cyan-400"
                       : "nav-link text-slate-400 hover:text-cyan-400"
-                  }`}
+                    }`}
                   onClick={() => {
                     setBookingOpen(false);
                     setTournamentOpen(false);
@@ -335,8 +323,7 @@ export default function AdminLayout() {
                           key={item.to}
                           to={item.to}
                           className={({ isActive }) =>
-                            `sales-dropdown-item block rounded-lg px-3 py-2.5 text-xs font-semibold transition-colors ${
-                              isActive ? "bg-slate-800/90 text-cyan-400" : "text-slate-200 hover:bg-slate-800/70"
+                            `sales-dropdown-item block rounded-lg px-3 py-2.5 text-xs font-semibold transition-colors ${isActive ? "bg-slate-800/90 text-cyan-400" : "text-slate-200 hover:bg-slate-800/70"
                             }`
                           }
                           onClick={() => setSalesOpen(false)}
@@ -351,11 +338,10 @@ export default function AdminLayout() {
               <div className="relative" ref={marketplaceRef}>
                 <button
                   type="button"
-                  className={`text-xs font-medium transition-colors flex items-center gap-0.5 ${
-                    marketplaceNavActive || marketplaceOpen
+                  className={`text-xs font-medium transition-colors flex items-center gap-0.5 ${marketplaceNavActive || marketplaceOpen
                       ? "nav-link-active text-cyan-400"
                       : "nav-link text-slate-400 hover:text-cyan-400"
-                  }`}
+                    }`}
                   onClick={() => {
                     setBookingOpen(false);
                     setTournamentOpen(false);
@@ -378,8 +364,7 @@ export default function AdminLayout() {
                           key={item.to}
                           to={item.to}
                           className={({ isActive }) =>
-                            `sales-dropdown-item block rounded-lg px-3 py-2.5 text-xs font-semibold transition-colors ${
-                              isActive ? "bg-slate-800/90 text-cyan-400" : "text-slate-200 hover:bg-slate-800/70"
+                            `sales-dropdown-item block rounded-lg px-3 py-2.5 text-xs font-semibold transition-colors ${isActive ? "bg-slate-800/90 text-cyan-400" : "text-slate-200 hover:bg-slate-800/70"
                             }`
                           }
                           onClick={() => setMarketplaceOpen(false)}
@@ -394,11 +379,10 @@ export default function AdminLayout() {
               <div className="relative" ref={tournamentRef}>
                 <button
                   type="button"
-                  className={`text-xs font-medium transition-colors flex items-center gap-0.5 ${
-                    tournamentNavActive || tournamentOpen
+                  className={`text-xs font-medium transition-colors flex items-center gap-0.5 ${tournamentNavActive || tournamentOpen
                       ? "nav-link-active text-cyan-400"
                       : "nav-link text-slate-400 hover:text-cyan-400"
-                  }`}
+                    }`}
                   onClick={() => {
                     setBookingOpen(false);
                     setSalesOpen(false);
@@ -419,10 +403,9 @@ export default function AdminLayout() {
                         key={s.to}
                         to={s.to}
                         className={({ isActive }) =>
-                          `block px-4 py-2.5 text-xs font-medium transition-colors ${
-                            isActive
-                              ? "bg-slate-800/80 text-cyan-400"
-                              : "text-slate-300 hover:bg-slate-800 hover:text-white"
+                          `block px-4 py-2.5 text-xs font-medium transition-colors ${isActive
+                            ? "bg-slate-800/80 text-cyan-400"
+                            : "text-slate-300 hover:bg-slate-800 hover:text-white"
                           }`
                         }
                         onClick={() => setTournamentOpen(false)}
@@ -438,10 +421,9 @@ export default function AdminLayout() {
                   key={item.to}
                   to={item.to}
                   className={({ isActive }) =>
-                    `text-xs font-medium transition-colors ${
-                      isActive
-                        ? "nav-link-active text-cyan-400"
-                        : "nav-link text-slate-400 hover:text-cyan-400"
+                    `text-xs font-medium transition-colors ${isActive
+                      ? "nav-link-active text-cyan-400"
+                      : "nav-link text-slate-400 hover:text-cyan-400"
                     }`
                   }
                 >
@@ -452,7 +434,7 @@ export default function AdminLayout() {
           </div>
           <div className="flex items-center gap-2 sm:gap-4 shrink-0">
             {/* OFFLINE STATUS INDICATOR */}
-            <div className="hidden lg:flex items-center border-r border-slate-800 pr-4 lg:pr-6">
+            <div className="hidden xl:flex items-center border-r border-slate-800 pr-4 xl:pr-6">
               {!isOnline ? (
                 <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-amber-500/10 border border-amber-500/20 text-amber-400 text-[10px] font-bold" title="Changes will sync automatically">
                   <div className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse"></div>
@@ -470,7 +452,7 @@ export default function AdminLayout() {
                 </span>
               )}
             </div>
-            <div className="hidden md:flex flex-col items-end border-r border-slate-800 pr-4 lg:pr-6">
+            <div className="hidden md:flex flex-col items-end border-r border-slate-800 pr-4 xl:pr-6">
               <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Current Date</span>
               <span className="text-sm font-semibold text-slate-300 whitespace-nowrap">{currentDate}</span>
             </div>
@@ -563,25 +545,20 @@ export default function AdminLayout() {
         <>
           <button
             type="button"
-            className="fixed inset-0 z-[110] bg-black/60 lg:hidden"
+            className="fixed inset-0 z-[110] bg-black/60 xl:hidden"
             aria-label="Close menu"
             onClick={() => setMobileMenuOpen(false)}
           />
           <div
-            className="fixed top-0 left-0 bottom-0 z-[120] w-[min(88vw,300px)] bg-[#151e2d] border-r border-slate-700 shadow-2xl flex flex-col lg:hidden pt-[env(safe-area-inset-top)]"
+            className="fixed top-0 left-0 bottom-0 z-[120] w-[min(88vw,300px)] bg-[#151e2d] border-r border-slate-700 shadow-2xl flex flex-col xl:hidden pt-[env(safe-area-inset-top)]"
             role="dialog"
             aria-modal="true"
             aria-label="Admin navigation"
           >
             <div className="flex items-center justify-between gap-2 px-4 py-3 border-b border-slate-700 shrink-0">
               <div className="flex items-center gap-2 min-w-0">
-                <div className="w-9 h-9 bg-gradient-to-br from-[#00f2ff] to-[#0088ff] rounded-lg flex items-center justify-center shrink-0">
-                  <span className="material-symbols-outlined text-slate-900 text-lg">sports_tennis</span>
-                </div>
-                <div className="min-w-0">
-                  <p className="text-sm font-black text-white truncate">RANAW PICKLEBALL</p>
-                  <p className="text-[10px] text-slate-400">{currentDate}</p>
-                </div>
+                <RanawLogo variant="navCompact" className="shrink-0" />
+                <p className="text-[10px] text-slate-400">{currentDate}</p>
               </div>
               <button
                 type="button"
@@ -601,8 +578,7 @@ export default function AdminLayout() {
                       to={item.to}
                       onClick={() => setMobileMenuOpen(false)}
                       className={({ isActive }) =>
-                        `block rounded-lg px-3 py-3 text-sm font-medium ${
-                          isActive ? "bg-slate-800 text-cyan-400" : "text-slate-200 hover:bg-slate-800/80"
+                        `block rounded-lg px-3 py-3 text-sm font-medium ${isActive ? "bg-slate-800 text-cyan-400" : "text-slate-200 hover:bg-slate-800/80"
                         }`
                       }
                     >
@@ -619,8 +595,7 @@ export default function AdminLayout() {
                       to={s.to}
                       onClick={() => setMobileMenuOpen(false)}
                       className={({ isActive }) =>
-                        `block rounded-lg px-3 py-3 text-sm font-medium ${
-                          isActive ? "bg-slate-800 text-cyan-400" : "text-slate-200 hover:bg-slate-800/80"
+                        `block rounded-lg px-3 py-3 text-sm font-medium ${isActive ? "bg-slate-800 text-cyan-400" : "text-slate-200 hover:bg-slate-800/80"
                         }`
                       }
                     >
@@ -637,8 +612,7 @@ export default function AdminLayout() {
                       to={item.to}
                       onClick={() => setMobileMenuOpen(false)}
                       className={({ isActive }) =>
-                        `block rounded-lg px-3 py-3 text-sm font-medium ${
-                          isActive ? "bg-slate-800 text-cyan-400" : "text-slate-200 hover:bg-slate-800/80"
+                        `block rounded-lg px-3 py-3 text-sm font-medium ${isActive ? "bg-slate-800 text-cyan-400" : "text-slate-200 hover:bg-slate-800/80"
                         }`
                       }
                     >
@@ -655,8 +629,7 @@ export default function AdminLayout() {
                       to={item.to}
                       onClick={() => setMobileMenuOpen(false)}
                       className={({ isActive }) =>
-                        `block rounded-lg px-3 py-3 text-sm font-medium ${
-                          isActive ? "bg-slate-800 text-cyan-400" : "text-slate-200 hover:bg-slate-800/80"
+                        `block rounded-lg px-3 py-3 text-sm font-medium ${isActive ? "bg-slate-800 text-cyan-400" : "text-slate-200 hover:bg-slate-800/80"
                         }`
                       }
                     >
@@ -673,8 +646,7 @@ export default function AdminLayout() {
                       to={s.to}
                       onClick={() => setMobileMenuOpen(false)}
                       className={({ isActive }) =>
-                        `block rounded-lg px-3 py-3 text-sm font-medium ${
-                          isActive ? "bg-slate-800 text-cyan-400" : "text-slate-200 hover:bg-slate-800/80"
+                        `block rounded-lg px-3 py-3 text-sm font-medium ${isActive ? "bg-slate-800 text-cyan-400" : "text-slate-200 hover:bg-slate-800/80"
                         }`
                       }
                     >
@@ -691,8 +663,7 @@ export default function AdminLayout() {
                       to={item.to}
                       onClick={() => setMobileMenuOpen(false)}
                       className={({ isActive }) =>
-                        `block rounded-lg px-3 py-3 text-sm font-medium ${
-                          isActive ? "bg-slate-800 text-cyan-400" : "text-slate-200 hover:bg-slate-800/80"
+                        `block rounded-lg px-3 py-3 text-sm font-medium ${isActive ? "bg-slate-800 text-cyan-400" : "text-slate-200 hover:bg-slate-800/80"
                         }`
                       }
                     >
@@ -708,12 +679,12 @@ export default function AdminLayout() {
 
       {/* MAIN CONTENT */}
       <OfflinePreloader />
-      <main className="max-w-[1600px] mx-auto p-6 lg:p-10">
+      <main className="max-w-[1600px] mx-auto p-4 sm:p-6 lg:p-10 overflow-x-hidden">
         <Outlet />
       </main>
 
       {/* FOOTER */}
-      <footer className="max-w-[1600px] mx-auto p-6 mt-12 border-t border-slate-800 flex flex-col md:flex-row justify-between items-center gap-4 text-slate-500 text-xs font-medium">
+      <footer className="max-w-[1600px] mx-auto p-4 sm:p-6 mt-8 sm:mt-12 border-t border-slate-800 flex flex-col md:flex-row justify-between items-center gap-4 text-slate-500 text-xs font-medium text-center md:text-left">
         <div>© 2026 RANAW PICKLEBALL COURT. All rights reserved.</div>
         <div className="flex items-center gap-6">
           <button

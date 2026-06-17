@@ -9,6 +9,7 @@ import { subscribeStores } from "../services/marketplace/storesService";
 import { subscribeVendorOrders } from "../services/marketplace/customerOrdersService";
 import { VENDOR_ORDER_STATUS } from "../marketplace/constants";
 import Pagination from "./Pagination";
+import ExportButton from "../components/export/ExportButton";
 
 function tsToDate(ts) {
   if (!ts) return null;
@@ -156,20 +157,34 @@ export default function SalesHistoryPage() {
             payments are not listed here.
           </p>
         </div>
-        <button
-          type="button"
-          className="ad-btn ad-btn-primary ad-btn-sm shrink-0"
-          onClick={() => {
+        <ExportButton
+          pageTitle="Sales History"
+          schemaKey="SALES_HISTORY"
+          exportData={() => {
             if (filtered.length === 0) {
               toast.error("No transactions in the current filters to export.");
-              return;
+              return [];
             }
-            downloadSalesHistoryPdf(filtered, { dateFrom, dateTo }, tsToDate);
-            toast.success("PDF report downloaded.");
+            return filtered.map(r => {
+              const dt = tsToDate(r.createdAt);
+              const items = r.items || [];
+              const summary = items.length <= 2
+                ? items.map(i => `${i.name} ×${i.quantity}`).join(", ")
+                : `${items[0]?.name} ×${items[0]?.quantity} +${items.length - 1} more`;
+              return {
+                date: dt ? format(dt, "MMM d, yyyy HH:mm") : "—",
+                orderId: r.orderId,
+                source: r.source === "pos" ? "POS" : "Food court",
+                customerName: r.customerName || "Guest",
+                vendorName: r.vendorName || "—",
+                summary: summary || "—",
+                total: r.total,
+                paymentMethod: r.paymentMethod || "—"
+              };
+            });
           }}
-        >
-          Save PDF report
-        </button>
+          filename="Sales_History_Report"
+        />
       </div>
 
       <div className="flex flex-col lg:flex-row gap-3 lg:items-end flex-wrap">

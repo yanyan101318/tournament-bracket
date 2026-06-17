@@ -23,7 +23,6 @@ const BLANK = {
   stallNumber: "",
   description: "",
   category: "food",
-  commissionRate: "10",
   status: STORE_STATUS.ACTIVE,
   logoFile: null,
   logoPreview: "",
@@ -117,7 +116,6 @@ export default function VendorStoresPage() {
       stallNumber: store.stallNumber || "",
       description: store.description || "",
       category: store.category || "food",
-      commissionRate: String(store.commissionRate ?? 10),
       status: store.status || STORE_STATUS.ACTIVE,
       logoFile: null,
       logoPreview: store.logoUrl || "",
@@ -142,7 +140,6 @@ export default function VendorStoresPage() {
         stallNumber: form.stallNumber,
         description: form.description,
         category: form.category,
-        commissionRate: Number(form.commissionRate) || 0,
         status: form.status,
         logoUrl,
       };
@@ -240,7 +237,6 @@ export default function VendorStoresPage() {
                     <span className={`ad-badge ad-badge-${s.status === STORE_STATUS.ACTIVE ? "approved" : "rejected"}`}>
                       {s.status === STORE_STATUS.ACTIVE ? "Active" : "Inactive"}
                     </span>
-                    <span className="text-[11px] text-slate-500">{s.commissionRate || 0}% commission</span>
                   </div>
                 </div>
               </div>
@@ -396,15 +392,9 @@ export default function VendorStoresPage() {
                 <label className="af-label">Description</label>
                 <textarea className="af-input min-h-20" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
               </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div className="af-group">
-                  <label className="af-label">Stall #</label>
-                  <input className="af-input" value={form.stallNumber} onChange={(e) => setForm({ ...form, stallNumber: e.target.value })} />
-                </div>
-                <div className="af-group">
-                  <label className="af-label">Commission %</label>
-                  <input type="number" min="0" max="100" className="af-input" value={form.commissionRate} onChange={(e) => setForm({ ...form, commissionRate: e.target.value })} />
-                </div>
+              <div className="af-group">
+                <label className="af-label">Stall #</label>
+                <input className="af-input" value={form.stallNumber} onChange={(e) => setForm({ ...form, stallNumber: e.target.value })} />
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div className="af-group">
