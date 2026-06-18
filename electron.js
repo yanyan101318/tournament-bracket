@@ -1,5 +1,6 @@
 // electron.js — Main process
-const { app, BrowserWindow, shell } = require("electron");
+const { app, BrowserWindow, shell, ipcMain } = require("electron");
+const { exec } = require("child_process");
 const path = require("path");
 const http = require("http");
 const fs = require("fs");
@@ -97,6 +98,7 @@ function createMain() {
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
+      preload: path.join(__dirname, "preload.js"),
       // persist: keeps IndexedDB (Firebase offline cache) across restarts
       partition: "persist:pickleball",
     },
@@ -127,6 +129,29 @@ function createMain() {
   mainWindow.on("closed", () => { mainWindow = null; });
 }
 // ── App lifecycle ──────────────────────────────────────────────────────────
+ipcMain.on("print-esc-pos", (event, bufferArray) => {
+  try {
+    const buffer = Buffer.from(bufferArray);
+    const tmpPath = path.join(app.getPath("temp"), "receipt.bin");
+    fs.writeFileSync(tmpPath, buffer);
+    
+    // Windows RAW print to USB001 or shared printer.
+    console.log("Attempting to print raw ESC/POS to TX-80 on USB001...");
+    exec(`copy /b "${tmpPath}" "\\\\localhost\\TX80"`, (err1) => {
+      if (err1) {
+        exec(`copy /b "${tmpPath}" USB001`, (err2) => {
+          if (err2) console.error("Failed to copy raw bytes to USB001:", err2);
+          else console.log("Successfully printed to USB001");
+        });
+      } else {
+        console.log("Successfully printed to \\\\localhost\\TX80");
+      }
+    });
+  } catch (err) {
+    console.error("IPC print error:", err);
+  }
+});
+
 app.whenReady().then(async () => {
   createSplash();
   await startProductionServer();

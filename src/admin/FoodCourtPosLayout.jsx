@@ -23,6 +23,8 @@ import {
   CUSTOMER_ORDER_STATUS,
   DISPATCH_STATUS,
   ORDER_SOURCE,
+  PAYMENT_MODE,
+  PAYMENT_STATUS,
   VENDOR_ORDER_STATUS,
   VENDOR_ORDER_STATUS_LABELS,
   customerTypeLabel,
@@ -69,12 +71,14 @@ export default function FoodCourtPosLayout() {
   }, [stores]);
 
   const queueOrders = useMemo(() => {
-    const pending = orders.filter(
-      (o) =>
-        o.dispatchStatus === DISPATCH_STATUS.BLOCKED &&
-        (o.status === CUSTOMER_ORDER_STATUS.AWAITING_PAYMENT ||
-          o.status === CUSTOMER_ORDER_STATUS.PENDING_PAYMENT)
-    );
+    const pending = orders.filter((o) => {
+      if (o.dispatchStatus !== DISPATCH_STATUS.BLOCKED) return false;
+      if (o.paymentMode === PAYMENT_MODE.GCASH) {
+        return o.paymentStatus === PAYMENT_STATUS.PAID;
+      }
+      return o.status === CUSTOMER_ORDER_STATUS.AWAITING_PAYMENT || o.status === CUSTOMER_ORDER_STATUS.PENDING_PAYMENT;
+    });
+
     if (queueTab === "walkin") {
       return pending.filter((o) => o.orderSource === ORDER_SOURCE.WALK_IN);
     }
@@ -143,6 +147,14 @@ export default function FoodCourtPosLayout() {
     return g;
   }, [allKitchen]);
 
+  useEffect(() => {
+    if (selected?.paymentMode === PAYMENT_MODE.GCASH) {
+      setPaymentMethod("GCash");
+    } else {
+      setPaymentMethod("Cash");
+    }
+  }, [selected]);
+
 
   async function handlePay() {
     if (!selected || !breakdown) return;
@@ -200,15 +212,17 @@ export default function FoodCourtPosLayout() {
       });
       await wrapSync(batch.commit(), { successMsg: "Payment confirmed & sent to vendors" });
 
-      const html = buildReceiptHtml({
-        headerTitle: "RANAW FOOD COURT",
-        headerLines: [`Customer: ${selected.customerName}`, `Verify: ${verificationCode}`],
-        items: lineItems,
-        total: selected.grandTotal,
-        paymentMethod,
-        footerNote: "Thank you!",
-      });
-      printReceiptHtml(html);
+      if (paymentMethod !== "GCash") {
+        const html = buildReceiptHtml({
+          headerTitle: "RANAW FOOD COURT",
+          headerLines: [`Customer: ${selected.customerName}`, `Verify: ${verificationCode}`],
+          items: lineItems,
+          total: selected.grandTotal,
+          paymentMethod,
+          footerNote: "Thank you!",
+        });
+        printReceiptHtml(html);
+      }
       setSuccessModal({ id: selected.id, amount: selected.grandTotal });
       setSelected(null);
       setCashReceived("");
@@ -319,6 +333,14 @@ export default function FoodCourtPosLayout() {
                 <span>Total</span>
                 <span>₱{roundMoney(selected.grandTotal).toFixed(2)}</span>
               </div>
+              <div className="flex justify-between text-slate-400 text-sm mt-1">
+                <span>Service Charge (2%)</span>
+                <span>-₱{roundMoney(selected.grandTotal * 0.02).toFixed(2)}</span>
+              </div>
+              <div className="flex justify-between text-md font-bold text-cyan-400 mt-1">
+                <span>Net Preparation Amount</span>
+                <span>₱{roundMoney(selected.grandTotal * 0.98).toFixed(2)}</span>
+              </div>
             </div>
             <label className="af-label">Payment</label>
             <select
@@ -348,7 +370,7 @@ export default function FoodCourtPosLayout() {
               disabled={paying}
               onClick={handlePay}
             >
-              {paying ? "Processing…" : "Confirm payment & dispatch"}
+              {paying ? "Processing…" : (paymentMethod === "GCash" ? "Confirm dispatch" : "Confirm payment & dispatch")}
             </button>
             <button type="button" className="ad-btn w-full text-red-400" onClick={handleReject}>
               Reject order

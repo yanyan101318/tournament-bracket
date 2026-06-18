@@ -269,6 +269,13 @@ export async function rejectCustomerOrder(orderId) {
   });
 }
 
+export async function markCustomerOrderPaid(orderId) {
+  await updateDoc(doc(db, CUSTOMER_ORDERS, orderId), {
+    paymentStatus: PAYMENT_STATUS.PAID,
+    updatedAt: serverTimestamp(),
+  });
+}
+
 /**
  * Admin POS payment — marks paid, dispatches to vendors, decrements stock, settlements.
  */

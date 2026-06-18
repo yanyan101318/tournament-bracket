@@ -19,8 +19,10 @@ export const CUSTOMER_TYPE = {
 };
 
 export const PAYMENT_MODE = {
-  PAY_NOW: "payNow",
-  PAY_LATER: "payLater",
+  PAY_NOW: "payNow", // legacy
+  PAY_LATER: "payLater", // legacy
+  CASH: "cash",
+  GCASH: "gcash",
 };
 
 export const PAYMENT_STATUS = {
@@ -92,5 +94,7 @@ export function customerTypeLabel(t) {
 }
 
 export function paymentModeLabel(m) {
+  if (m === PAYMENT_MODE.CASH) return "Cash";
+  if (m === PAYMENT_MODE.GCASH) return "GCash";
   return m === PAYMENT_MODE.PAY_LATER ? "Pay Later" : "Pay Now";
 }
