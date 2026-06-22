@@ -11,7 +11,7 @@ import toast from "react-hot-toast";
 import { QRCodeCanvas } from "qrcode.react";
 import { getEffectiveCourtStatus } from "../lib/bookingSlots";
 
-const BLANK = { name: "", description: "", pricePerHour: "", amenities: "", isActive: true, activeStartTime: "06:00", activeEndTime: "22:00" };
+const BLANK = { name: "", description: "", pricePerHour: "", amenities: "", isActive: true, activeStartTime: "06:00", activeEndTime: "22:00", picture: "" };
 
 export default function CourtManager() {
   const [courts, setCourts] = useState([]);
@@ -42,13 +42,25 @@ export default function CourtManager() {
 
   function set(k, v) { setForm(p => ({ ...p, [k]: v })); }
 
+  const handlePictureUpload = (e) => {
+    const file = e.target.files[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        set("picture", reader.result);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
   function openAdd() { setForm(BLANK); setEditId(null); setShowForm(true); }
   function openEdit(c) {
     setForm({
       ...c,
       amenities: Array.isArray(c.amenities) ? c.amenities.join(", ") : c.amenities ?? "",
       activeStartTime: c.activeStartTime || "06:00",
-      activeEndTime: c.activeEndTime || "22:00"
+      activeEndTime: c.activeEndTime || "22:00",
+      picture: c.picture || ""
     });
     setEditId(c.id); setShowForm(true);
   }
@@ -76,6 +88,7 @@ export default function CourtManager() {
       isActive: form.isActive,
       activeStartTime: form.activeStartTime || "06:00",
       activeEndTime: form.activeEndTime || "22:00",
+      picture: form.picture || "",
     };
     try {
       let promise;
@@ -198,6 +211,7 @@ export default function CourtManager() {
           const isEffectiveActive = getEffectiveCourtStatus(court);
           return (
             <div key={court.id} className={`cm-card ${isEffectiveActive ? "" : "cm-inactive"}`}>
+              {court.picture && <img src={court.picture} alt={court.name} style={{ width: "100%", height: "180px", objectFit: "cover", borderTopLeftRadius: "var(--ad-radius)", borderTopRightRadius: "var(--ad-radius)", borderBottom: "1px solid var(--ad-border)" }} />}
               <div className="cm-card-header">
                 <div className="flex items-center gap-2">
                   <div className="cm-card-name">{court.name}</div>
@@ -252,6 +266,11 @@ export default function CourtManager() {
               <div className="af-group">
                 <label className="af-label">Court Name *</label>
                 <input className="af-input" value={form.name} onChange={e => set("name", e.target.value)} placeholder="e.g. Court 1" required />
+              </div>
+              <div className="af-group">
+                <label className="af-label">Court Picture (Base64)</label>
+                {form.picture && <img src={form.picture} alt="Preview" style={{ width: "100%", maxHeight: "200px", objectFit: "cover", marginBottom: "10px", borderRadius: "8px" }} />}
+                <input type="file" accept="image/*" className="af-input" onChange={handlePictureUpload} />
               </div>
               <div className="af-group">
                 <label className="af-label">Description</label>

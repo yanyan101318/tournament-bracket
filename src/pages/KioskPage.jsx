@@ -62,7 +62,9 @@ export default function KioskPage() {
 
       {/* 2. HERO / BRANDING SECTION */}
       <main className="flex-1 flex flex-col items-center justify-center p-8 z-10">
-        <div className="text-center mb-16 animate-in fade-in slide-in-from-bottom-8 duration-1000">
+
+        {/* 👇 ADDED mt-16 HERE. Change 16 to a larger number (like 24 or 32) for more space, or smaller (like 8) for less space */}
+        <div className="text-center mt-[-525px] mb-16 animate-in fade-in slide-in-from-bottom-8 duration-1000">
           <h2 className="text-5xl md:text-7xl font-extrabold text-white mb-6 drop-shadow-2xl">
             Welcome to <span className="text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 to-emerald-400">RANAW PICKLEBALL COURT</span>
           </h2>
@@ -77,7 +79,7 @@ export default function KioskPage() {
           {/* BUTTON 1: Sign Up / Login */}
           <a
             href="https://pickleball-app-inky.vercel.app/"
-            className="group flex-1 bg-slate-800/80 hover:bg-cyan-600 border border-slate-700 hover:border-cyan-400 backdrop-blur-md rounded-3xl p-10 flex flex-col items-center justify-center text-center transition-all duration-300 shadow-2xl hover:shadow-cyan-500/20 active:scale-95 min-h-[250px] cursor-pointer"
+            className="group flex-1 bg-slate-800/80 hover:bg-cyan-600 border border-slate-700 hover:border-cyan-400 backdrop-blur-md rounded-3xl p-10 flex flex-col items-center justify-center text-center transition-all duration-300 shadow-2xl hover:shadow-cyan-500/20 active:scale-95 min-h-[350px] cursor-pointer"
           >
             <div className="w-20 h-20 bg-slate-900 group-hover:bg-cyan-700 rounded-2xl flex items-center justify-center mb-6 transition-colors shadow-inner">
               <User size={40} className="text-cyan-400 group-hover:text-white transition-colors" />

@@ -123,7 +123,7 @@ export default function FoodCourtPosLayout() {
         if (!doneMs) continue;
         if (o.transferredAt) continue;
         if (now - doneMs >= 15000) {
-          markVendorOrderTransferred(o.storeId, o.id).catch(() => {});
+          markVendorOrderTransferred(o.storeId, o.id).catch(() => { });
         }
       }
     }, 2000);
@@ -333,14 +333,8 @@ export default function FoodCourtPosLayout() {
                 <span>Total</span>
                 <span>₱{roundMoney(selected.grandTotal).toFixed(2)}</span>
               </div>
-              <div className="flex justify-between text-slate-400 text-sm mt-1">
-                <span>Service Charge (2%)</span>
-                <span>-₱{roundMoney(selected.grandTotal * 0.02).toFixed(2)}</span>
-              </div>
-              <div className="flex justify-between text-md font-bold text-cyan-400 mt-1">
-                <span>Net Preparation Amount</span>
-                <span>₱{roundMoney(selected.grandTotal * 0.98).toFixed(2)}</span>
-              </div>
+
+
             </div>
             <label className="af-label">Payment</label>
             <select
@@ -390,15 +384,14 @@ export default function FoodCourtPosLayout() {
             <div key={status}>
               <h4 className="text-xs font-bold uppercase mb-2 flex items-center gap-2">
                 <span
-                  className={`w-2 h-2 rounded-full ${
-                    status === VENDOR_ORDER_STATUS.PENDING
-                      ? "bg-orange-400"
-                      : status === VENDOR_ORDER_STATUS.PREPARING
-                        ? "bg-blue-400"
-                        : status === VENDOR_ORDER_STATUS.READY
-                          ? "bg-emerald-400"
-                          : "bg-slate-500"
-                  }`}
+                  className={`w-2 h-2 rounded-full ${status === VENDOR_ORDER_STATUS.PENDING
+                    ? "bg-orange-400"
+                    : status === VENDOR_ORDER_STATUS.PREPARING
+                      ? "bg-blue-400"
+                      : status === VENDOR_ORDER_STATUS.READY
+                        ? "bg-emerald-400"
+                        : "bg-slate-500"
+                    }`}
                 />
                 {VENDOR_ORDER_STATUS_LABELS[status]} ({kitchenGroups[status]?.length || 0})
               </h4>

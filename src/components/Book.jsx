@@ -855,21 +855,30 @@ export default function Book() {
                               key={c.id}
                               type="button"
                               onClick={() => setForm({ ...form, courtId: c.id, timeSlot: "" })}
-                              className={`p-4 rounded-xl border text-left transition-all ${form.courtId === c.id
+                              className={`rounded-xl border text-left transition-all overflow-hidden flex flex-col ${form.courtId === c.id
                                   ? "border-green-500 bg-green-500/10"
                                   : "border-slate-700 bg-slate-800 hover:border-slate-600"
                                 }`}
                             >
-                              <div className="flex items-center justify-between mb-1">
-                                <span className="text-white font-medium text-sm">{c.name}</span>
-                                {form.courtId === c.id && <Check size={14} className="text-green-400" />}
-                              </div>
-                              <span className={`text-xs px-2 py-0.5 rounded-full ${kindClass}`}>
-                                {kind}
-                              </span>
-                              <div className="text-green-400 font-semibold mt-2">
-                                ₱{price.toLocaleString()}
-                                <span className="text-slate-500 text-xs font-normal">/hr</span>
+                              {c.picture && (
+                                <div className="w-full h-32 bg-slate-900 shrink-0">
+                                  <img src={c.picture} alt={c.name} className="w-full h-full object-cover" />
+                                </div>
+                              )}
+                              <div className="p-4 flex-1 flex flex-col justify-between w-full">
+                                <div>
+                                  <div className="flex items-center justify-between mb-1">
+                                    <span className="text-white font-medium text-sm">{c.name}</span>
+                                    {form.courtId === c.id && <Check size={14} className="text-green-400" />}
+                                  </div>
+                                  <span className={`text-xs px-2 py-0.5 rounded-full inline-block ${kindClass}`}>
+                                    {kind}
+                                  </span>
+                                </div>
+                                <div className="text-green-400 font-semibold mt-3">
+                                  ₱{price.toLocaleString()}
+                                  <span className="text-slate-500 text-xs font-normal">/hr</span>
+                                </div>
                               </div>
                             </button>
                           );
