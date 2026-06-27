@@ -141,3 +141,50 @@ export function getEffectiveCourtStatus(court) {
   
   return court.isActive !== false;
 }
+
+/**
+ * Checks if the requested booking overlaps with any Open Play schedule.
+ * @param {string} timeSlot - The requested start time (e.g. "09:00 AM")
+ * @param {number} durationHours - Booking duration
+ * @param {string} dateStr - The requested date "YYYY-MM-DD"
+ * @param {object} court - The court object
+ * @returns {boolean} true if the slot overlaps with an open play schedule
+ */
+export function isSlotDuringOpenPlay(timeSlot, durationHours, dateStr, court) {
+  if (!court || !court.isOpenPlay || !Array.isArray(court.openPlaySchedule)) {
+    return false;
+  }
+
+  const newStart = timeToMinutes(timeSlot);
+  if (newStart === 0) return false;
+  const newEnd = newStart + durationHours * 60;
+
+  // JS Date uses 0 for Sunday. Parse the date string securely.
+  const [yy, mm, dd] = (dateStr || "").split("-");
+  const reqDate = new Date(parseInt(yy, 10), parseInt(mm, 10) - 1, parseInt(dd, 10));
+  const reqDayOfWeek = reqDate.getDay(); // 0-6
+
+  for (const schedule of court.openPlaySchedule) {
+    if (!schedule.isActive) continue;
+
+    // Check if the schedule applies to this date
+    if (schedule.type === "recurring") {
+      if (Number(schedule.dayOfWeek) !== reqDayOfWeek) continue;
+    } else if (schedule.type === "onetime") {
+      if (schedule.date !== dateStr) continue;
+    } else {
+      continue;
+    }
+
+    const opStart = timeToMinutes(schedule.startTime);
+    const opEnd = timeToMinutes(schedule.endTime);
+
+    // Overlap condition
+    if (newStart < opEnd && newEnd > opStart) {
+      return true; // Overlaps with open play!
+    }
+  }
+
+  return false;
+}
+

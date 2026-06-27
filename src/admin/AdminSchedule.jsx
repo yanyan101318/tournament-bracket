@@ -33,6 +33,7 @@ export default function AdminSchedule() {
   const [cursor, setCursor] = useState(() => startOfMonth(new Date()));
   const [bookings, setBookings] = useState([]);
   const [payments, setPayments] = useState([]);
+  const [tournaments, setTournaments] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState(() => format(new Date(), "yyyy-MM-dd"));
 
@@ -51,9 +52,13 @@ export default function AdminSchedule() {
     const unsubP = onSnapshot(qP, { includeMetadataChanges: true }, (snap) => {
       setPayments(snap.docs.map((d) => ({ id: d.id, hasPendingWrites: d.metadata.hasPendingWrites, ...d.data() })));
     });
+    const unsubT = onSnapshot(collection(db, "tournamentsV2"), (snap) => {
+      setTournaments(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+    });
     return () => {
       unsubB();
       unsubP();
+      unsubT();
     };
   }, []);
 
@@ -63,7 +68,7 @@ export default function AdminSchedule() {
   const gridEnd = endOfWeek(monthEnd, { weekStartsOn: 0 });
   const days = eachDayOfInterval({ start: gridStart, end: gridEnd });
 
-  const { bookingsByDate, paymentsByDate, activities } = useMemo(() => {
+  const { bookingsByDate, paymentsByDate, tournamentsByDate, activities } = useMemo(() => {
     const bookingsByDateMap = new Map();
     for (const b of bookings) {
       const key = b.date;
@@ -80,9 +85,29 @@ export default function AdminSchedule() {
       paymentsByDateMap.get(key).push(p);
     }
 
+    const tournamentsByDateMap = new Map();
+    for (const t of tournaments) {
+      if (!t.date || typeof t.date !== "string") continue;
+      const key = t.date.split("T")[0];
+      if (!tournamentsByDateMap.has(key)) tournamentsByDateMap.set(key, []);
+      tournamentsByDateMap.get(key).push(t);
+    }
+
     const dayBookings = bookingsByDateMap.get(selected) ?? [];
     const dayPayments = paymentsByDateMap.get(selected) ?? [];
+    const dayTournaments = tournamentsByDateMap.get(selected) ?? [];
     const rows = [];
+    
+    for (const t of dayTournaments) {
+      rows.push({
+        kind: "tournament",
+        sort: `00:00-${t.id}`,
+        label: "Tournament",
+        title: t.name || "Tournament",
+        sub: `Status: ${t.status || 'Draft'}${t.venue ? ` · ${t.venue}` : ''}`,
+        id: t.id,
+      });
+    }
     for (const b of dayBookings) {
       rows.push({
         kind: "booking",
@@ -110,9 +135,10 @@ export default function AdminSchedule() {
     return {
       bookingsByDate: bookingsByDateMap,
       paymentsByDate: paymentsByDateMap,
+      tournamentsByDate: tournamentsByDateMap,
       activities: rows,
     };
-  }, [bookings, payments, selected]);
+  }, [bookings, payments, tournaments, selected]);
 
   if (loading) {
     return (
@@ -177,7 +203,8 @@ export default function AdminSchedule() {
               const isSelected = selected === key;
               const bCount = (bookingsByDate.get(key) ?? []).length;
               const pCount = (paymentsByDate.get(key) ?? []).length;
-              const hasActivity = bCount + pCount > 0;
+              const tCount = (tournamentsByDate.get(key) ?? []).length;
+              const hasActivity = bCount + pCount + tCount > 0;
               const isToday = isSameDay(day, new Date());
 
               return (
@@ -201,6 +228,12 @@ export default function AdminSchedule() {
                   </span>
                   {hasActivity && (
                     <div className="absolute bottom-1 left-1.5 right-1.5 flex flex-wrap gap-0.5 justify-center">
+                      {tCount > 0 && (
+                        <span
+                          className="h-1.5 w-1.5 rounded-full bg-cyan-400"
+                          title={`${tCount} tournament(s)`}
+                        />
+                      )}
                       {bCount > 0 && (
                         <span
                           className="h-1.5 w-1.5 rounded-full bg-emerald-400"
@@ -221,6 +254,9 @@ export default function AdminSchedule() {
           </div>
 
           <div className="mt-4 flex flex-wrap gap-4 text-xs text-slate-500">
+            <span className="flex items-center gap-1.5">
+              <span className="h-2 w-2 rounded-full bg-cyan-400" /> Tournaments
+            </span>
             <span className="flex items-center gap-1.5">
               <span className="h-2 w-2 rounded-full bg-emerald-400" /> Bookings
             </span>
@@ -259,6 +295,8 @@ export default function AdminSchedule() {
                       className={`text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded ${
                         a.kind === "booking"
                           ? "bg-emerald-500/15 text-emerald-400"
+                          : a.kind === "tournament"
+                          ? "bg-cyan-500/15 text-cyan-400"
                           : "bg-amber-500/15 text-amber-400"
                       }`}
                     >

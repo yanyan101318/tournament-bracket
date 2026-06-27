@@ -7,7 +7,6 @@ import { db } from "../firebase";
 import "./book.css";
 import {
   collection,
-  addDoc,
   doc,
   setDoc,
   query,
@@ -25,7 +24,7 @@ import {
 import toast from "react-hot-toast";
 import { format, addDays } from "date-fns";
 import { roundMoney, parseCashAmount, parseAmountPaid } from "../lib/bookingMoney";
-import { TIME_SLOTS, isSlotStartAvailableForDuration, calculateEndTime, isSlotWithinCourtHours, getEffectiveCourtStatus } from "../lib/bookingSlots";
+import { TIME_SLOTS, isSlotStartAvailableForDuration, calculateEndTime, isSlotWithinCourtHours, getEffectiveCourtStatus, isSlotDuringOpenPlay } from "../lib/bookingSlots";
 import {
   PLAN_FULL,
   PLAN_PARTIAL,
@@ -192,15 +191,33 @@ export default function Book() {
 
   useEffect(() => {
     if (activeCourts.length === 0) return;
+    const bookableCourts = activeCourts.filter(c => !c.isOpenPlay);
+    if (bookableCourts.length === 0) return;
     setForm((f) => {
-      if (courtParam && activeCourts.some((c) => c.id === courtParam)) {
+      if (courtParam && bookableCourts.some((c) => c.id === courtParam)) {
         if (f.courtId === courtParam) return f;
         return { ...f, courtId: courtParam, timeSlot: "" };
       }
-      if (activeCourts.some((c) => c.id === f.courtId)) return f;
-      return { ...f, courtId: activeCourts[0].id, timeSlot: "" };
+      if (bookableCourts.some((c) => c.id === f.courtId)) return f;
+      return { ...f, courtId: bookableCourts[0].id, timeSlot: "" };
     });
   }, [activeCourts, courtParam]);
+
+  const [tournaments, setTournaments] = useState([]);
+  useEffect(() => {
+    const unsub = onSnapshot(collection(db, "tournamentsV2"), (snap) => {
+      setTournaments(snap.docs.map(d => d.data()));
+    });
+    return () => unsub();
+  }, []);
+
+  const isTournamentDay = useMemo(() => {
+    if (!form.date) return false;
+    return tournaments.some(t => {
+      if (!t.date || t.status === 'completed') return false;
+      return t.date.startsWith(form.date);
+    });
+  }, [tournaments, form.date]);
 
   const loadDayBookings = useCallback(async () => {
     if (!form.courtId) return;
@@ -340,15 +357,15 @@ export default function Book() {
       if (f.isCustomTime) {
         if (!f.customStartTime) return f;
         const time12 = format24to12(f.customStartTime);
-        if (isSlotStartAvailableForDuration(time12, actualD, dayBookings) && isSlotWithinCourtHours(time12, actualD, court)) return f;
+        if (isSlotStartAvailableForDuration(time12, actualD, dayBookings) && isSlotWithinCourtHours(time12, actualD, court) && !isSlotDuringOpenPlay(time12, actualD, form.date, court?.rawCourt)) return f;
         return { ...f, customStartTime: "" };
       } else {
         if (!f.timeSlot) return f;
-        if (isSlotStartAvailableForDuration(f.timeSlot, actualD, dayBookings) && isSlotWithinCourtHours(f.timeSlot, actualD, court)) return f;
+        if (isSlotStartAvailableForDuration(f.timeSlot, actualD, dayBookings) && isSlotWithinCourtHours(f.timeSlot, actualD, court) && !isSlotDuringOpenPlay(f.timeSlot, actualD, form.date, court?.rawCourt)) return f;
         return { ...f, timeSlot: "" };
       }
     });
-  }, [form.duration, form.customDuration, form.isCustomTime, dayBookings]);
+  }, [form.duration, form.customDuration, form.isCustomTime, dayBookings, form.date, court]);
 
   /** Track Dirty State */
   useEffect(() => {
@@ -523,6 +540,14 @@ export default function Book() {
         toast.error("That time is no longer available. Please choose another slot.");
         return;
       }
+      if (court?.rawCourt?.isOpenPlay) {
+        toast.error("This court is currently set to Open Play mode and cannot be booked");
+        return;
+      }
+      if (isSlotDuringOpenPlay(actualTimeSlot, actualDuration, form.date, court?.rawCourt)) {
+        toast.error("Court is reserved for Open Play during this time");
+        return;
+      }
       if (!isSlotWithinCourtHours(actualTimeSlot, actualDuration, court)) {
         toast.error(`The selected time is outside the court's operating hours (${court.activeStartTime || "06:00"} - ${court.activeEndTime || "22:00"}).`);
         return;
@@ -655,7 +680,7 @@ export default function Book() {
       });
 
       if (adminMode && String(form.contactNumber).trim()) {
-        const smsMsg = "Assalamu alaikum! RANAW PICKLEBALL COURT: Your booking has been CONFIRMED. Please arrive on your scheduled time. Thank you for choosing RANAW PICKLEBALL COURT.";
+        const smsMsg = `Assalamu alaikum! RANAW PICKLEBALL COURT: Your booking has been confirmed for ${form.date} at ${actualTimeSlot}. Court ${court?.name || form.courtId}. Please arrive 15 minutes before your scheduled time. Shukran!!!`;
         try {
           await sendBookingSMS(bookingRef.id, String(form.contactNumber).trim(), smsMsg);
         } catch (e) {
@@ -792,8 +817,8 @@ export default function Book() {
             {[1, 2, 3].map((s) => (
               <div key={s} className="flex items-center gap-2">
                 <div className={`w-9 h-9 rounded-full flex items-center justify-center text-sm font-semibold transition-all ${step > s ? "bg-green-500 text-slate-950" :
-                    step === s ? "bg-green-500/20 border-2 border-green-500 text-green-400" :
-                      "bg-slate-800 text-slate-600"
+                  step === s ? "bg-green-500/20 border-2 border-green-500 text-green-400" :
+                    "bg-slate-800 text-slate-600"
                   }`}>
                   {step > s ? <Check size={16} /> : s}
                 </div>
@@ -854,11 +879,15 @@ export default function Book() {
                             <button
                               key={c.id}
                               type="button"
+                              disabled={c.isOpenPlay}
                               onClick={() => setForm({ ...form, courtId: c.id, timeSlot: "" })}
-                              className={`rounded-xl border text-left transition-all overflow-hidden flex flex-col ${form.courtId === c.id
+                              className={`rounded-xl border text-left transition-all overflow-hidden flex flex-col ${c.isOpenPlay
+                                ? "border-slate-800 bg-slate-900/50 opacity-40 cursor-not-allowed"
+                                : form.courtId === c.id
                                   ? "border-green-500 bg-green-500/10"
                                   : "border-slate-700 bg-slate-800 hover:border-slate-600"
                                 }`}
+                              title={c.isOpenPlay ? "Open Play - Not Available for Booking" : ""}
                             >
                               {c.picture && (
                                 <div className="w-full h-32 bg-slate-900 shrink-0">
@@ -871,9 +900,14 @@ export default function Book() {
                                     <span className="text-white font-medium text-sm">{c.name}</span>
                                     {form.courtId === c.id && <Check size={14} className="text-green-400" />}
                                   </div>
-                                  <span className={`text-xs px-2 py-0.5 rounded-full inline-block ${kindClass}`}>
+                                  <span className={`text-xs px-2 py-0.5 rounded-full inline-block mr-1 ${kindClass}`}>
                                     {kind}
                                   </span>
+                                  {c.isOpenPlay && (
+                                    <span className="text-xs px-2 py-0.5 rounded-full inline-block bg-indigo-500/20 text-indigo-400">
+                                      Open Play
+                                    </span>
+                                  )}
                                 </div>
                                 <div className="text-green-400 font-semibold mt-3">
                                   ₱{price.toLocaleString()}
@@ -998,33 +1032,47 @@ export default function Book() {
                           onChange={(e) => setForm({ ...form, date: e.target.value, timeSlot: "", customStartTime: "" })}
                         />
                       </div>
-                      <div>
-                        <label className="label">Duration</label>
-                        <div className="flex gap-2">
-                          <select
-                            className="input-field"
-                            value={form.duration}
-                            onChange={(e) => setForm({ ...form, duration: e.target.value === "Custom" ? "Custom" : Number(e.target.value) })}
-                          >
-                            {DURATIONS.map((d) => (
-                              <option key={d} value={d}>{d} {d === 1 ? "hour" : (d === "Custom" ? "" : "hours")}</option>
-                            ))}
-                          </select>
-                          {form.duration === "Custom" && (
-                            <input
-                              type="number"
-                              step="0.25"
-                              min="0.25"
-                              className="input-field w-24"
-                              placeholder="Hours"
-                              value={form.customDuration}
-                              onChange={(e) => setForm({ ...form, customDuration: e.target.value })}
-                            />
-                          )}
+                      
+                      {!isTournamentDay && (
+                        <div>
+                          <label className="label">Duration</label>
+                          <div className="flex gap-2">
+                            <select
+                              className="input-field"
+                              value={form.duration}
+                              onChange={(e) => setForm({ ...form, duration: e.target.value === "Custom" ? "Custom" : Number(e.target.value) })}
+                            >
+                              {DURATIONS.map((d) => (
+                                <option key={d} value={d}>{d} {d === 1 ? "hour" : (d === "Custom" ? "" : "hours")}</option>
+                              ))}
+                            </select>
+                            {form.duration === "Custom" && (
+                              <input
+                                type="number"
+                                step="0.25"
+                                min="0.25"
+                                className="input-field w-24"
+                                placeholder="Hours"
+                                value={form.customDuration}
+                                onChange={(e) => setForm({ ...form, customDuration: e.target.value })}
+                              />
+                            )}
+                          </div>
                         </div>
-                      </div>
+                      )}
                     </div>
-                    
+
+                    {isTournamentDay ? (
+                      <div className="bg-amber-500/10 border border-amber-500/50 p-6 rounded-xl text-center mb-6">
+                        <span className="material-symbols-outlined text-amber-500 text-4xl mb-2 block mx-auto">sports_tennis</span>
+                        <h3 className="text-xl font-bold text-amber-500 mb-2">Tournament Day</h3>
+                        <p className="text-amber-200/70 text-sm max-w-md mx-auto">
+                          All courts are fully reserved for a tournament on this date. Booking is unavailable.
+                        </p>
+                      </div>
+                    ) : (
+                      <>
+
                     <div className="flex items-center justify-between mb-2">
                       <label className="label mb-0">Start Time</label>
                       {adminMode && (
@@ -1039,7 +1087,7 @@ export default function Book() {
                         </label>
                       )}
                     </div>
-                    
+
                     {form.isCustomTime ? (
                       <div className="mb-4">
                         <input
@@ -1054,15 +1102,16 @@ export default function Book() {
                         <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
                           {TIME_SLOTS.map((slot) => {
                             const inPast = isSlotInPast(form.date, slot);
-                            const exactBooked = dayBookings.some((b) => (b.startTime || b.timeSlot) === slot);
+                            const isSlotOccupied = !isSlotStartAvailableForDuration(slot, 0.25, dayBookings);
                             const isTaken = !inPast && !isSlotStartAvailableForDuration(
                               slot,
                               actualDuration,
                               dayBookings
                             );
                             const outOfHours = !isSlotWithinCourtHours(slot, actualDuration, court);
-                            const isOverlap = isTaken && !exactBooked;
-                            const isUnavailable = inPast || isTaken || outOfHours;
+                            const isOpenPlay = isSlotDuringOpenPlay(slot, actualDuration, form.date, court?.rawCourt);
+                            const isOverlap = isTaken && !isSlotOccupied;
+                            const isUnavailable = inPast || isTaken || outOfHours || isOpenPlay;
 
                             return (
                               <button
@@ -1071,20 +1120,22 @@ export default function Book() {
                                 disabled={isUnavailable}
                                 onClick={() => setForm({ ...form, timeSlot: slot })}
                                 className={`py-2.5 px-3 rounded-xl text-xs font-medium transition-all ${isUnavailable ? "bg-red-500/10 border border-red-500/20 text-red-400/50 cursor-not-allowed" :
-                                    form.timeSlot === slot ? "bg-green-500 text-slate-950 glow-green" :
-                                      "bg-slate-800 text-slate-400 hover:bg-slate-700 hover:text-white border border-slate-700"
+                                  form.timeSlot === slot ? "bg-green-500 text-slate-950 glow-green" :
+                                    "bg-slate-800 text-slate-400 hover:bg-slate-700 hover:text-white border border-slate-700"
                                   }`}
+                                title={isOpenPlay ? "This court is reserved for Open Play during this time" : ""}
                               >
                                 {slot}
-                                {exactBooked && <div className="text-[10px] leading-tight mt-0.5">Booked</div>}
-                                {isOverlap && !exactBooked && <div className="text-[10px] leading-tight mt-0.5">Conflicts</div>}
-                                {inPast && <div className="text-[10px] leading-tight mt-0.5">Not Available</div>}
+                                {isSlotOccupied && <div className="text-[10px] leading-tight mt-0.5">Booked</div>}
+                                {isOverlap && !isSlotOccupied && <div className="text-[10px] leading-tight mt-0.5">Conflicts</div>}
+                                {inPast && !isSlotOccupied && <div className="text-[10px] leading-tight mt-0.5">Not Available</div>}
+                                {isOpenPlay && !isSlotOccupied && !inPast && <div className="text-[10px] leading-tight mt-0.5 text-indigo-400/70">Open Play</div>}
                               </button>
                             );
                           })}
                         </div>
                         <div className="text-xs text-slate-500 mt-3">
-                          <p>Booked = exact slot start is reserved. Conflicts = this start time would overlap an existing booking for the selected duration.</p>
+                          <p>Booked = this time slot is already reserved. Conflicts = this start time would overlap an existing booking for the selected duration.</p>
                         </div>
                       </>
                     )}
@@ -1095,6 +1146,8 @@ export default function Book() {
                         <span className="text-slate-300 text-sm">Calculated End Time:</span>
                         <strong className="text-white">{calculatedEndTime}</strong>
                       </div>
+                    )}
+                    </>
                     )}
                   </div>
 
@@ -1135,8 +1188,8 @@ export default function Book() {
                             type="button"
                             onClick={() => toggleEquipment(item.id)}
                             className={`w-full flex items-center justify-between p-4 rounded-xl border transition-all ${form.equipment.includes(item.id)
-                                ? "border-green-500 bg-green-500/10"
-                                : "border-slate-700 bg-slate-800 hover:border-slate-600"
+                              ? "border-green-500 bg-green-500/10"
+                              : "border-slate-700 bg-slate-800 hover:border-slate-600"
                               }`}
                           >
                             <div className="flex items-center gap-3 min-w-0">
@@ -1201,8 +1254,8 @@ export default function Book() {
                         type="button"
                         onClick={() => selectPaymentPlan(p.id)}
                         className={`rounded-xl border py-3 px-2 text-xs font-semibold transition-all ${form.paymentPlan === p.id
-                            ? "border-cyan-500 bg-cyan-500/15 text-cyan-300"
-                            : "border-slate-700 bg-slate-800/80 text-slate-400 hover:border-slate-600"
+                          ? "border-cyan-500 bg-cyan-500/15 text-cyan-300"
+                          : "border-slate-700 bg-slate-800/80 text-slate-400 hover:border-slate-600"
                           }`}
                       >
                         {p.label}
@@ -1233,8 +1286,8 @@ export default function Book() {
                       type="button"
                       onClick={() => selectPaymentMethod(PAYMENT_GCASH)}
                       className={`flex items-center justify-center gap-2 rounded-xl border py-3.5 px-3 text-sm font-semibold min-h-[48px] transition-all ${form.paymentMethod === PAYMENT_GCASH
-                          ? "border-green-500 bg-green-500/15 text-green-400"
-                          : "border-slate-700 bg-slate-800/80 text-slate-400"
+                        ? "border-green-500 bg-green-500/15 text-green-400"
+                        : "border-slate-700 bg-slate-800/80 text-slate-400"
                         }`}
                     >
                       <Smartphone size={18} /> GCash
@@ -1243,8 +1296,8 @@ export default function Book() {
                       type="button"
                       onClick={() => selectPaymentMethod(PAYMENT_CASH)}
                       className={`flex items-center justify-center gap-2 rounded-xl border py-3.5 px-3 text-sm font-semibold min-h-[48px] transition-all ${form.paymentMethod === PAYMENT_CASH
-                          ? "border-amber-500 bg-amber-500/15 text-amber-400"
-                          : "border-slate-700 bg-slate-800/80 text-slate-400"
+                        ? "border-amber-500 bg-amber-500/15 text-amber-400"
+                        : "border-slate-700 bg-slate-800/80 text-slate-400"
                         }`}
                     >
                       <Banknote size={18} /> Cash
@@ -1364,10 +1417,10 @@ export default function Book() {
                               <label className="label">Change</label>
                               <div
                                 className={`input-field flex items-center min-h-[42px] cursor-default ${cashChangeUi.variant === "danger"
-                                    ? "text-red-400 border-red-500/30 bg-red-500/5"
-                                    : cashChangeUi.variant === "ok"
-                                      ? "text-emerald-400"
-                                      : "text-slate-500"
+                                  ? "text-red-400 border-red-500/30 bg-red-500/5"
+                                  : cashChangeUi.variant === "ok"
+                                    ? "text-emerald-400"
+                                    : "text-slate-500"
                                   }`}
                               >
                                 {cashChangeUi.text}
@@ -1391,6 +1444,7 @@ export default function Book() {
                 {step < 3 ? (
                   <button
                     onClick={() => {
+                      if (step === 1 && isTournamentDay) return toast.error("Booking is unavailable on tournament days");
                       if (step === 1 && !form.timeSlot) return toast.error("Please select a time slot");
                       if (step === 1 && !form.playerName) return toast.error("Player name is required");
                       if (step === 1 && !String(form.contactNumber ?? "").trim()) {
@@ -1462,10 +1516,10 @@ export default function Book() {
                       <div className="flex gap-2 mt-1">
                         <span
                           className={`text-xs px-2 py-0.5 rounded-full ${court.type === "Indoor"
-                              ? "bg-blue-500/20 text-blue-400"
-                              : court.type === "Outdoor"
-                                ? "bg-orange-500/20 text-orange-400"
-                                : "bg-slate-500/20 text-slate-400"
+                            ? "bg-blue-500/20 text-blue-400"
+                            : court.type === "Outdoor"
+                              ? "bg-orange-500/20 text-orange-400"
+                              : "bg-slate-500/20 text-slate-400"
                             }`}
                         >
                           {court.type}

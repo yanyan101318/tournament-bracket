@@ -1,0 +1,13 @@
+node_modules
+coverage
+build
+dist-electron
+electron
+electron-app
+out
+release
+*.exe
+*.asar
+.git
+.vercel
+.env

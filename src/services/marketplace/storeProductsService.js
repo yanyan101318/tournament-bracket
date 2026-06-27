@@ -6,7 +6,6 @@ import {
   query,
   orderBy,
   onSnapshot,
-  increment,
   serverTimestamp,
 } from "firebase/firestore";
 import { storeProductsCollection } from "./storesService";

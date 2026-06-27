@@ -16,14 +16,16 @@ const NAV_LINKS = [
 
 const BOOKING_SUBLINKS = [
   { to: "/admin/bookings", label: "Bookings" },
-  { to: "/admin/new-booking", label: "New booking" },
+  { to: "/admin/new-booking", label: "Manual Booking" },
   { to: "/admin/crm", label: "CRM" },
   { to: "/admin/memberships", label: "Memberships" },
 ];
 
 const TOURNAMENT_SUBLINKS = [
   { to: "/admin/tournament", label: "Tournament bracket" },
+  { to: "/admin/tournament-v2", label: "Tournament V2" },
   { to: "/admin/paddle-stack", label: "Paddle stacking" },
+  { to: "/admin/open-play", label: "Open Play" },
 ];
 
 const NAV_LINKS_AFTER_TOURNAMENT = [
@@ -33,12 +35,12 @@ const NAV_LINKS_AFTER_TOURNAMENT = [
 ];
 
 const SALES_DROPDOWN_LINKS = [
-  { to: "/admin/pos", label: "POS" },
+  { to: "/admin/pos", label: "Food Court POS" },
   { to: "/admin/sales-history", label: "Transactions and receipts" },
 ];
 
 const MARKETPLACE_DROPDOWN_LINKS = [
-  { to: "/admin/vendors", label: "Vendor stores" },
+  { to: "/admin/vendors", label: "Vendor Stalls" },
 ];
 
 export default function AdminLayout() {
@@ -255,8 +257,8 @@ export default function AdminLayout() {
                 <button
                   type="button"
                   className={`text-xs font-medium transition-colors flex items-center gap-0.5 ${bookingNavActive || bookingOpen
-                      ? "nav-link-active text-cyan-400"
-                      : "nav-link text-slate-400 hover:text-cyan-400"
+                    ? "nav-link-active text-cyan-400"
+                    : "nav-link text-slate-400 hover:text-cyan-400"
                     }`}
                   onClick={() => {
                     setTournamentOpen(false);
@@ -298,8 +300,8 @@ export default function AdminLayout() {
                 <button
                   type="button"
                   className={`text-xs font-medium transition-colors flex items-center gap-0.5 ${salesNavActive || salesOpen
-                      ? "nav-link-active text-cyan-400"
-                      : "nav-link text-slate-400 hover:text-cyan-400"
+                    ? "nav-link-active text-cyan-400"
+                    : "nav-link text-slate-400 hover:text-cyan-400"
                     }`}
                   onClick={() => {
                     setBookingOpen(false);
@@ -339,8 +341,8 @@ export default function AdminLayout() {
                 <button
                   type="button"
                   className={`text-xs font-medium transition-colors flex items-center gap-0.5 ${marketplaceNavActive || marketplaceOpen
-                      ? "nav-link-active text-cyan-400"
-                      : "nav-link text-slate-400 hover:text-cyan-400"
+                    ? "nav-link-active text-cyan-400"
+                    : "nav-link text-slate-400 hover:text-cyan-400"
                     }`}
                   onClick={() => {
                     setBookingOpen(false);
@@ -380,8 +382,8 @@ export default function AdminLayout() {
                 <button
                   type="button"
                   className={`text-xs font-medium transition-colors flex items-center gap-0.5 ${tournamentNavActive || tournamentOpen
-                      ? "nav-link-active text-cyan-400"
-                      : "nav-link text-slate-400 hover:text-cyan-400"
+                    ? "nav-link-active text-cyan-400"
+                    : "nav-link text-slate-400 hover:text-cyan-400"
                     }`}
                   onClick={() => {
                     setBookingOpen(false);

@@ -24,6 +24,7 @@ yarn-error.log*
 
 .vercel
 
+.env
 
 # Electron build output
 dist-electron/

@@ -314,7 +314,7 @@ app.post("/api/webhooks/paymongo", async (req, res) => {
   }
 });
 
-const PORT = process.env.PORT || 3001;
+const PORT = 3001;
 app.listen(PORT, "127.0.0.1", () => {
   console.log(`Local API Server running on http://127.0.0.1:${PORT}`);
   if (isDev) {

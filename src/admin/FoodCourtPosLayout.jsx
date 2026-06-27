@@ -70,7 +70,7 @@ export default function FoodCourtPosLayout() {
     return m;
   }, [stores]);
 
-  const queueOrders = useMemo(() => {
+  const { onlineQueue, walkinQueue } = useMemo(() => {
     const pending = orders.filter((o) => {
       if (o.dispatchStatus !== DISPATCH_STATUS.BLOCKED) return false;
       if (o.paymentMode === PAYMENT_MODE.GCASH) {
@@ -79,11 +79,13 @@ export default function FoodCourtPosLayout() {
       return o.status === CUSTOMER_ORDER_STATUS.AWAITING_PAYMENT || o.status === CUSTOMER_ORDER_STATUS.PENDING_PAYMENT;
     });
 
-    if (queueTab === "walkin") {
-      return pending.filter((o) => o.orderSource === ORDER_SOURCE.WALK_IN);
-    }
-    return pending.filter((o) => o.orderSource !== ORDER_SOURCE.WALK_IN);
-  }, [orders, queueTab]);
+    return {
+      onlineQueue: pending.filter((o) => o.orderSource !== ORDER_SOURCE.WALK_IN),
+      walkinQueue: pending.filter((o) => o.orderSource === ORDER_SOURCE.WALK_IN),
+    };
+  }, [orders]);
+
+  const queueOrders = queueTab === "walkin" ? walkinQueue : onlineQueue;
 
   const breakdown = useMemo(() => {
     if (!selected) return null;
@@ -255,14 +257,14 @@ export default function FoodCourtPosLayout() {
             className={`flex-1 py-2 text-xs font-bold rounded-lg ${queueTab === "online" ? "bg-cyan-500 text-slate-950" : "bg-slate-800 text-slate-400"}`}
             onClick={() => setQueueTab("online")}
           >
-            Online ({orders.filter((o) => o.orderSource !== ORDER_SOURCE.WALK_IN && o.dispatchStatus === DISPATCH_STATUS.BLOCKED).length})
+            Online {onlineQueue.length > 0 ? `(${onlineQueue.length})` : ""}
           </button>
           <button
             type="button"
             className={`flex-1 py-2 text-xs font-bold rounded-lg ${queueTab === "walkin" ? "bg-cyan-500 text-slate-950" : "bg-slate-800 text-slate-400"}`}
             onClick={() => setQueueTab("walkin")}
           >
-            Walk-in
+            Walk-in {walkinQueue.length > 0 ? `(${walkinQueue.length})` : ""}
           </button>
         </div>
         <div className="fc-pos-scroll">

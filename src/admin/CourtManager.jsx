@@ -26,6 +26,8 @@ export default function CourtManager() {
   const [overrideDuration, setOverrideDuration] = useState(2);
   const [overrideDatetime, setOverrideDatetime] = useState("");
 
+  const [openPlayModal, setOpenPlayModal] = useState(null);
+
   const { syncState, wrapSync } = useOfflineSync();
 
   useEffect(() => {
@@ -217,8 +219,15 @@ export default function CourtManager() {
                   <div className="cm-card-name">{court.name}</div>
                   {court.hasPendingWrites && <span className="ad-badge ad-badge-pending text-[10px] px-1 py-0 border border-amber-500/20">Pending Sync</span>}
                 </div>
-                <div className={`ad-badge ${isEffectiveActive ? "ad-badge-approved" : "ad-badge-rejected"}`}>
-                  {isEffectiveActive ? "Active" : "Inactive"}
+                <div className="flex items-center gap-2">
+                  <div className={`ad-badge ${isEffectiveActive ? "ad-badge-approved" : "ad-badge-rejected"}`}>
+                    {isEffectiveActive ? "Active" : "Inactive"}
+                  </div>
+                  {court.isOpenPlay && (
+                    <div className="ad-badge" style={{ backgroundColor: "rgba(99, 102, 241, 0.15)", color: "#818cf8", borderColor: "#6366f1" }}>
+                      Open Play
+                    </div>
+                  )}
                 </div>
               </div>
               <div className="cm-price">₱{court.pricePerHour?.toLocaleString()}<span>/hour</span></div>
@@ -242,6 +251,7 @@ export default function CourtManager() {
                 )}
                 <button className="ad-btn ad-btn-sm ad-btn-outline" onClick={() => openEdit(court)} disabled={syncState !== 'idle' && syncState !== 'error'}> Edit</button>
                 <button className="ad-btn ad-btn-sm ad-btn-outline" onClick={() => setQrCourt(court)}>QR</button>
+                <button className="ad-btn ad-btn-sm ad-btn-outline" onClick={() => setOpenPlayModal(court)} disabled={syncState !== 'idle' && syncState !== 'error'}>Open Play</button>
                 <button className="ad-btn ad-btn-sm ad-btn-outline" onClick={() => openOverrideModal(court)} disabled={syncState !== 'idle' && syncState !== 'error'}>
                   {isEffectiveActive ? " Deactivate" : " Activate"}
                 </button>
@@ -353,6 +363,139 @@ export default function CourtManager() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Open Play Modal */}
+      {openPlayModal && (
+        <div className="ad-modal-backdrop" onClick={e => e.target === e.currentTarget && setOpenPlayModal(null)}>
+          <div className="ad-modal" style={{ maxWidth: "600px" }}>
+            <div className="ad-modal-header">
+              <h3>Manage Open Play - {openPlayModal.name}</h3>
+              <button className="ad-modal-close" onClick={() => setOpenPlayModal(null)}>✕</button>
+            </div>
+            <div className="p-4 overflow-y-auto" style={{ maxHeight: "70vh" }}>
+              <div className="mb-6 bg-slate-800 p-4 rounded-lg border border-slate-700 flex items-center justify-between">
+                <div>
+                  <h4 className="font-semibold text-white">Enable Open Play</h4>
+                  <p className="text-xs text-slate-400">Allows assigning schedules where the court is reserved for open play.</p>
+                </div>
+                <label className="relative inline-flex items-center cursor-pointer">
+                  <input type="checkbox" className="sr-only peer" checked={openPlayModal.isOpenPlay || false} onChange={async (e) => {
+                    const next = e.target.checked;
+                    if (!next && !window.confirm("Disable open play for this court?")) return;
+                    try {
+                      await wrapSync(updateDoc(doc(db, "courts", openPlayModal.id), { isOpenPlay: next }), {
+                        successMsg: `Open play ${next ? 'enabled' : 'disabled'}`,
+                        errorMsg: "Failed to update open play status"
+                      });
+                      setOpenPlayModal(p => ({ ...p, isOpenPlay: next }));
+                    } catch (err) {}
+                  }} />
+                  <div className="w-11 h-6 bg-slate-600 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-500"></div>
+                </label>
+              </div>
+
+              {openPlayModal.isOpenPlay && (
+                <div>
+                  <div className="flex justify-between items-center mb-4">
+                    <h4 className="font-semibold text-white">Schedules</h4>
+                    <button className="ad-btn ad-btn-sm ad-btn-primary" onClick={() => {
+                      const newSched = { id: Date.now().toString(), type: "recurring", dayOfWeek: 0, date: "", startTime: "09:00", endTime: "12:00", isActive: true };
+                      const arr = [...(openPlayModal.openPlaySchedule || []), newSched];
+                      setOpenPlayModal(p => ({ ...p, openPlaySchedule: arr }));
+                    }}>+ Add Schedule</button>
+                  </div>
+                  
+                  {(!openPlayModal.openPlaySchedule || openPlayModal.openPlaySchedule.length === 0) && (
+                    <div className="text-center py-6 text-slate-500 text-sm">No schedules configured.</div>
+                  )}
+
+                  <div className="space-y-3">
+                    {(openPlayModal.openPlaySchedule || []).map((sched, idx) => (
+                      <div key={sched.id} className="bg-slate-800 p-3 rounded border border-slate-700">
+                        <div className="flex gap-2 items-start">
+                          <div className="flex-1 space-y-3">
+                            <div className="flex gap-2">
+                              <select className="af-input text-sm p-1.5 flex-1" value={sched.type} onChange={(e) => {
+                                const arr = [...openPlayModal.openPlaySchedule];
+                                arr[idx].type = e.target.value;
+                                setOpenPlayModal(p => ({ ...p, openPlaySchedule: arr }));
+                              }}>
+                                <option value="recurring">Recurring (Weekly)</option>
+                                <option value="onetime">One-Time (Specific Date)</option>
+                              </select>
+                              <div className="flex items-center gap-1">
+                                <span className="text-xs text-slate-400">Active</span>
+                                <input type="checkbox" checked={sched.isActive} onChange={(e) => {
+                                  const arr = [...openPlayModal.openPlaySchedule];
+                                  arr[idx].isActive = e.target.checked;
+                                  setOpenPlayModal(p => ({ ...p, openPlaySchedule: arr }));
+                                }} className="cursor-pointer" />
+                              </div>
+                            </div>
+                            
+                            <div className="flex gap-2 items-center">
+                              {sched.type === "recurring" ? (
+                                <select className="af-input text-sm p-1.5 flex-1" value={sched.dayOfWeek} onChange={(e) => {
+                                  const arr = [...openPlayModal.openPlaySchedule];
+                                  arr[idx].dayOfWeek = Number(e.target.value);
+                                  setOpenPlayModal(p => ({ ...p, openPlaySchedule: arr }));
+                                }}>
+                                  <option value={0}>Sunday</option>
+                                  <option value={1}>Monday</option>
+                                  <option value={2}>Tuesday</option>
+                                  <option value={3}>Wednesday</option>
+                                  <option value={4}>Thursday</option>
+                                  <option value={5}>Friday</option>
+                                  <option value={6}>Saturday</option>
+                                </select>
+                              ) : (
+                                <input type="date" className="af-input text-sm p-1.5 flex-1" value={sched.date} onChange={(e) => {
+                                  const arr = [...openPlayModal.openPlaySchedule];
+                                  arr[idx].date = e.target.value;
+                                  setOpenPlayModal(p => ({ ...p, openPlaySchedule: arr }));
+                                }} />
+                              )}
+                              <input type="time" className="af-input text-sm p-1.5 w-24" value={sched.startTime} onChange={(e) => {
+                                  const arr = [...openPlayModal.openPlaySchedule];
+                                  arr[idx].startTime = e.target.value;
+                                  setOpenPlayModal(p => ({ ...p, openPlaySchedule: arr }));
+                                }} />
+                              <span className="text-slate-400">to</span>
+                              <input type="time" className="af-input text-sm p-1.5 w-24" value={sched.endTime} onChange={(e) => {
+                                  const arr = [...openPlayModal.openPlaySchedule];
+                                  arr[idx].endTime = e.target.value;
+                                  setOpenPlayModal(p => ({ ...p, openPlaySchedule: arr }));
+                                }} />
+                            </div>
+                          </div>
+                          <button type="button" className="text-red-400 hover:text-red-300 p-1" onClick={() => {
+                            const arr = openPlayModal.openPlaySchedule.filter((_, i) => i !== idx);
+                            setOpenPlayModal(p => ({ ...p, openPlaySchedule: arr }));
+                          }}>✕</button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+            <div className="ad-modal-footer mt-4 border-t border-slate-700 pt-4">
+              <button type="button" className="ad-btn ad-btn-outline" onClick={() => setOpenPlayModal(null)}>Cancel</button>
+              <button type="button" className="ad-btn ad-btn-primary" disabled={syncState !== 'idle' && syncState !== 'error'} onClick={async () => {
+                try {
+                  await wrapSync(updateDoc(doc(db, "courts", openPlayModal.id), { 
+                    openPlaySchedule: openPlayModal.openPlaySchedule || []
+                  }), {
+                    successMsg: "Open play schedules saved",
+                    errorMsg: "Failed to save schedules"
+                  });
+                  setOpenPlayModal(null);
+                } catch (err) {}
+              }}>Save Schedules</button>
+            </div>
           </div>
         </div>
       )}

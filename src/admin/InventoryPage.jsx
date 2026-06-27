@@ -37,6 +37,7 @@ import {
   getRentRentalCaption,
 } from "./inventoryHelpers";
 import { downloadEquipmentInventoryPdf } from "../lib/adminPdfReports";
+import { sendBookingSMS } from "../lib/smsService";
 
 const TABS = [
   { id: "dashboard", label: "Dashboard" },
@@ -113,6 +114,9 @@ export default function InventoryPage() {
   const { syncState, wrapSync } = useOfflineSync();
 
   const [renterName, setRenterName] = useState("");
+  const [contactNumber, setContactNumber] = useState("");
+  const [courtNumber, setCourtNumber] = useState("");
+  const [courts, setCourts] = useState([]);
   const [rentHours, setRentHours] = useState(2);
   const [rentLines, setRentLines] = useState([{ itemId: "", quantity: 1 }]);
 
@@ -139,11 +143,41 @@ export default function InventoryPage() {
     const unsubB = onSnapshot(qb, { includeMetadataChanges: true }, (snap) => {
       setRents(snap.docs.map((d) => ({ id: d.id, hasPendingWrites: d.metadata.hasPendingWrites, ...d.data() })));
     });
+    const qc = query(collection(db, "courts"), orderBy("name", "asc"));
+    const unsubC = onSnapshot(qc, (snap) => {
+      setCourts(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+    });
     return () => {
       unsubI();
       unsubB();
+      unsubC();
     };
   }, []);
+
+  useEffect(() => {
+    const interval = setInterval(async () => {
+      const now = Date.now();
+      for (const b of rents.filter(isRentRecordActive)) {
+        if (!b.expectedReturnAt) continue;
+        const expectedMs = b.expectedReturnAt.toMillis();
+        const diffMins = (expectedMs - now) / 60000;
+        const phone = b.contactNumber;
+        
+        if (diffMins <= 30 && diffMins > 0 && !b.smsSent30min && phone) {
+          const smsMsg = `RANAW PICKLEBALL COURT: Your equipment rental is due in 30 minutes. Please return it on time to avoid additional charges.`;
+          await sendBookingSMS(b.id + "_30m", phone, smsMsg);
+          await updateDoc(doc(db, "borrowRecords", b.id), { smsSent30min: true });
+        }
+        
+        if (diffMins <= 0 && !b.smsSentExpired && phone) {
+          const smsMsg = `RANAW PICKLEBALL COURT: Your equipment rental time has EXPIRED. Please return the equipment immediately to avoid additional charges.`;
+          await sendBookingSMS(b.id + "_exp", phone, smsMsg);
+          await updateDoc(doc(db, "borrowRecords", b.id), { smsSentExpired: true });
+        }
+      }
+    }, 60000);
+    return () => clearInterval(interval);
+  }, [rents]);
 
   const itemsById = useMemo(() => {
     const m = {};
@@ -338,6 +372,10 @@ export default function InventoryPage() {
       toast.error("Borrower name is required");
       return;
     }
+    if (!contactNumber.trim()) {
+      toast.error("Contact number is required");
+      return;
+    }
     const hours = Math.max(0.5, Number(rentHours) || 0);
     const lines = rentLines
       .filter((l) => l.itemId)
@@ -373,6 +411,8 @@ export default function InventoryPage() {
       const borrowRef = doc(collection(db, "borrowRecords"));
       batch.set(borrowRef, {
         borrowerName: name,
+        contactNumber: contactNumber.trim(),
+        courtNumber: courtNumber,
         items: lines,
         borrowedAt: Timestamp.fromMillis(now),
         expectedReturnAt: Timestamp.fromMillis(expectedMs),
@@ -397,8 +437,34 @@ export default function InventoryPage() {
       });
 
       setRenterName("");
+      setContactNumber("");
+      setCourtNumber("");
       setRentHours(2);
       setRentLines([{ itemId: "", quantity: 1 }]);
+    } catch (err) {
+      console.error(err);
+    }
+  }
+
+  async function cancelBorrow(b) {
+    const confirmMsg = `Are you sure you want to cancel the rent for “${b.borrowerName}” and remove the record completely?`;
+    if (!window.confirm(confirmMsg)) return;
+    try {
+      const batch = writeBatch(db);
+      batch.delete(doc(db, "borrowRecords", b.id));
+      for (const l of b.items || []) {
+        const q = Number(l.quantity) || 0;
+        if (q <= 0) continue;
+        batch.update(doc(db, "inventoryItems", l.itemId), {
+          availableQty: increment(q),
+          updatedAt: serverTimestamp(),
+        });
+      }
+      await wrapSync(batch.commit(), {
+        successMsg: "Rent cancelled — stock returned",
+        offlineMsg: "Cancel Action Saved Offline",
+        errorMsg: "Cancel failed"
+      });
     } catch (err) {
       console.error(err);
     }
@@ -567,6 +633,7 @@ export default function InventoryPage() {
                     <thead>
                       <tr>
                         <th>Borrower</th>
+                        <th>Court</th>
                         <th>Items</th>
                         <th>Borrowed</th>
                         <th>Due back</th>
@@ -588,6 +655,9 @@ export default function InventoryPage() {
                             </div>
                           </td>
                           <td className="text-sm">
+                            {b.courtNumber || "—"}
+                          </td>
+                          <td className="text-sm">
                             {(b.items || [])
                               .map((l) => `${l.itemName} ×${l.quantity}`)
                               .join(", ")}
@@ -605,6 +675,9 @@ export default function InventoryPage() {
                             </span>
                             {isOverdueActive(b) && (
                               <span className="ml-1 text-[10px] uppercase text-amber-500">overdue</span>
+                            )}
+                            {!isOverdueActive(b) && b.expectedReturnAt && ((b.expectedReturnAt.toMillis() - Date.now()) / 60000 <= 30) && (
+                              <span className="ml-1 text-[10px] uppercase bg-amber-500/20 text-amber-400 px-1 py-0.5 rounded">soon</span>
                             )}
                           </td>
                           <RentBillableHoursCell rent={b} />
@@ -624,6 +697,14 @@ export default function InventoryPage() {
                               }}
                             >
                               Extend
+                            </button>
+                            <button
+                              type="button"
+                              className="ad-btn ad-btn-sm ad-btn-danger mr-1"
+                              onClick={() => cancelBorrow(b)}
+                              disabled={syncState !== "idle" && syncState !== "error"}
+                            >
+                              Cancel
                             </button>
                             <button
                               type="button"
@@ -795,6 +876,29 @@ export default function InventoryPage() {
                     placeholder="Player or member name"
                     required
                   />
+                </div>
+                <div className="af-group">
+                  <label className="af-label">Contact Number *</label>
+                  <input
+                    className="af-input"
+                    value={contactNumber}
+                    onChange={(e) => setContactNumber(e.target.value)}
+                    placeholder="09..."
+                    required
+                  />
+                </div>
+                <div className="af-group">
+                  <label className="af-label">Court Number</label>
+                  <select
+                    className="af-input"
+                    value={courtNumber}
+                    onChange={(e) => setCourtNumber(e.target.value)}
+                  >
+                    <option value="">Select court (optional)</option>
+                    {courts.map(c => (
+                      <option key={c.id} value={c.name}>{c.name}</option>
+                    ))}
+                  </select>
                 </div>
                 <div className="af-group">
                   <label className="af-label">How many Hours? *</label>

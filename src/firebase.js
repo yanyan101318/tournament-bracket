@@ -1,6 +1,6 @@
 // src/firebase.js — Create React App: use REACT_APP_* (set in Vercel → Environment Variables)
 import { initializeApp } from "firebase/app";
-import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager } from "firebase/firestore";
+import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager, setLogLevel } from "firebase/firestore";
 import { getAuth } from "firebase/auth";
 import { getStorage } from "firebase/storage";
 
@@ -34,4 +34,8 @@ export const db = initializeFirestore(app, {
 });
 export const auth = getAuth(app);
 export const storage = getStorage(app);
+
+// Silence harmless internal Firebase logs (like primary lease negotiation across multiple tabs)
+setLogLevel('silent');
+
 export default app;

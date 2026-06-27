@@ -63,7 +63,7 @@ export default function BookingManager() {
   const [extendHours, setExtendHours] = useState(1);
   const [extending, setExtending] = useState(false);
   const [balanceModal, setBalanceModal] = useState(EMPTY_BALANCE_MODAL);
-  const [payStatusDraft, setPayStatusDraft] = useState("");
+
   const [printData, setPrintData] = useState(null);
   const [linkedPayment, setLinkedPayment] = useState(null);
   const [zoomImage, setZoomImage] = useState(null);
@@ -108,20 +108,9 @@ export default function BookingManager() {
       if (!cancelled) setResolvedContact(phone);
     });
     return () => { cancelled = true; };
-  }, [selected?.id, selected?.contactNumber, selected?.userId]);
-
-  useEffect(() => {
-    if (!selected) {
-      setPayStatusDraft("");
-      return;
-    }
-    const current = String(selected.customerPaymentStatus || "").toLowerCase();
-    if (current === "paid" || current === "partial" || current === "unpaid") {
-      setPayStatusDraft(current);
-      return;
-    }
-    setPayStatusDraft("partial");
   }, [selected]);
+
+
 
   useEffect(() => {
     setPage(1);
@@ -163,7 +152,7 @@ export default function BookingManager() {
       setPaidEditDraft("");
       return;
     }
-    const { paid, total } = resolveBookingTotals(selected, linkedPayment);
+    const { paid } = resolveBookingTotals(selected, linkedPayment);
     const gcashHint =
       String(selected.paymentMethod || linkedPayment?.method || "").toLowerCase() === "gcash";
     const payRecordAmt = roundMoney(Number(linkedPayment?.amount) || 0);
@@ -547,43 +536,7 @@ export default function BookingManager() {
     }
   }
 
-  async function updatePayStatus(booking, nextStatus) {
-    const status = String(nextStatus || "").toLowerCase();
-    if (!["paid", "partial", "unpaid"].includes(status)) {
-      toast.error("Invalid pay status.");
-      return;
-    }
-    setActing(booking.id);
-    try {
-      const batch = writeBatch(db);
-      const bookingRef = doc(db, "bookings", booking.id);
-      batch.update(bookingRef, {
-        customerPaymentStatus: status,
-        updatedAt: Timestamp.now(),
-      });
-      const linked = await getDocs(
-        query(collection(db, "payments"), where("bookingId", "==", booking.id))
-      );
-      linked.forEach((d) => {
-        batch.update(d.ref, {
-          customerPaymentStatus: status,
-          updatedAt: serverTimestamp(),
-        });
-      });
 
-      await wrapSync(batch.commit(), {
-        successMsg: "Pay status updated.",
-        offlineMsg: "Status Update Saved Offline — Pending Server Sync",
-        errorMsg: "Could not update pay status."
-      });
-
-      setSelected((s) => (s && s.id === booking.id ? { ...s, customerPaymentStatus: status } : s));
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setActing(null);
-    }
-  }
 
   async function removeBooking(id) {
     const row = bookings.find((b) => b.id === id) ?? selected;
@@ -666,7 +619,7 @@ export default function BookingManager() {
       });
 
       setActing("payment_approve_sms");
-      const smsMsg = "Assalamu alaikum! This is RANAW PICKLEBALL COURT: Your booking has been APPROVED. Please arrive on your scheduled time. Thank you for choosing RANAW PICKLEBALL COURT.";
+      const smsMsg = `Assalamu alaikum! RANAW PICKLEBALL COURT: Your booking has been approved for ${selected.date} at ${selected.timeSlot}. Court ${selected.courtName || selected.courtId}. Please arrive 15 minutes before your scheduled time.`;
       const phone = await resolveBookingContactNumber(db, selected);
       const smsRes = await sendBookingSMS(selected.id, phone, smsMsg);
 
@@ -828,6 +781,7 @@ export default function BookingManager() {
               date: b.date ?? "—",
               timeSlot: b.timeSlot ?? "—",
               playerName: b.playerName ?? b.userId ?? "—",
+              contactNumber: b.contactNumber ?? "—",
               status: b.status ?? "Pending",
               amount: Number(b.totalAmount) || 0,
               paymentMethod: b.customerPaymentStatus ?? "—",

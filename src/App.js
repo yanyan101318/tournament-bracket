@@ -17,10 +17,12 @@ import CrmPage from "./admin/CrmPage";
 import MembershipRequests from "./admin/MembershipRequests";
 import AnnouncementManager from "./admin/AnnouncementManager";
 import AdminTournament from "./admin/AdminTournament";
+import AdminTournamentV2 from "./admin/TournamentManagerV2/TournamentManagerV2";
 import AdminSchedule from "./admin/AdminSchedule";
 import Book from "./components/Book";
 import InventoryPage from "./admin/InventoryPage";
 import PaddleStackingPage from "./admin/PaddleStackingPage";
+import OpenPlayPage from "./admin/OpenPlayPage";
 import PosPage from "./admin/PosPage";
 import SalesHistoryPage from "./admin/SalesHistoryPage";
 import VendorStoresPage from "./admin/vendors/VendorStoresPage";
@@ -28,7 +30,10 @@ import VendorPortal from "./vendor/VendorPortal";
 
 // Tournament public pages (scorer / viewer)
 import ScorerPage from "./pages/ScorerPage";
+import ScorerPageV2 from "./pages/ScorerPageV2";
+import LedWallV2 from "./pages/LedWallV2";
 import ViewerPage from "./pages/ViewerPage";
+import PublicTournamentView from "./pages/PublicTournamentView";
 import OrderPage from "./pages/OrderPage";
 import FoodCourtPage from "./pages/FoodCourtPage";
 import CustomerAccountPage from "./pages/CustomerAccountPage";
@@ -65,7 +70,10 @@ export default function App() {
 
             {/* ── FOOD COURT APP (Standalone Shell) ── */}
             <Route path="/bracket/:tournamentId" element={<ViewerPage />} />
+            <Route path="/tournament-v2/:id" element={<PublicTournamentView />} />
+            <Route path="/tournament-v2/:id/led-wall" element={<LedWallV2 />} />
             <Route path="/score/:tournamentId/:matchId" element={<ScorerPage />} />
+            <Route path="/score-v2/:tournamentId/:matchId" element={<ScorerPageV2 />} />
             <Route path="/foodcourt" element={<FoodCourtPage />} />
             <Route path="/order" element={<OrderPage />} />
             <Route path="/account" element={<CustomerAccountPage />} />
@@ -92,7 +100,9 @@ export default function App() {
               <Route path="sales-history" element={<SalesHistoryPage />} />
               <Route path="vendors" element={<VendorStoresPage />} />
               <Route path="tournament" element={<AdminTournament />} />
+              <Route path="tournament-v2" element={<AdminTournamentV2 />} />
               <Route path="paddle-stack" element={<PaddleStackingPage />} />
+              <Route path="open-play" element={<OpenPlayPage />} />
               <Route path="analytics" element={<Analytics />} />
               <Route path="equipment" element={<InventoryPage />} />
               <Route path="inventory" element={<Navigate to="/admin/equipment" replace />} />

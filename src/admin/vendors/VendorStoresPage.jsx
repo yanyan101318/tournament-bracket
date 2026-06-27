@@ -201,7 +201,7 @@ export default function VendorStoresPage() {
     <div className="ad-page mkp-page">
       <div className="ad-page-header">
         <div>
-          <h1 className="ad-page-title">Vendor Stores</h1>
+          <h1 className="ad-page-title">Vendor Stalls</h1>
           <p className="ad-page-sub">Centralized food court vendor management.</p>
         </div>
         <div className="flex gap-2">
@@ -216,7 +216,7 @@ export default function VendorStoresPage() {
 
       {storeCards.length === 0 ? (
         <div className="ad-empty border border-dashed border-[var(--ad-border)] rounded-xl py-12">
-          No vendor stores yet.
+          No vendor stalls yet.
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
@@ -259,7 +259,7 @@ export default function VendorStoresPage() {
                 <button type="button" className="ad-btn ad-btn-sm ad-btn-outline" onClick={() => toggleStatus(s)}>
                   {s.status === STORE_STATUS.ACTIVE ? "Disable" : "Activate"}
                 </button>
-                <button type="button" className="ad-btn ad-btn-sm ad-btn-outline" onClick={() => viewProducts(s)}>View Orders</button>
+                <button type="button" className="ad-btn ad-btn-sm ad-btn-outline" onClick={() => viewProducts(s)}>View Products</button>
                 <button type="button" className="ad-btn ad-btn-sm ad-btn-primary" onClick={() => setVendorLinkModal(s)}>Open Store</button>
                 <button type="button" className="ad-btn ad-btn-sm ad-btn-danger" onClick={() => handleDelete(s)}>Delete</button>
               </div>
