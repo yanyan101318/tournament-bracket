@@ -59,19 +59,17 @@ export function bookingMatchesCourt(booking, courtId, courtName) {
 }
 
 /**
- * Pending/approved booking on today's date for this court — order anytime that day
- * (as soon as the booking is made, through the rest of the day).
+ * Pending/approved booking for this court.
+ * Can only order if the current time is within the booking's time slot.
  */
 export function bookingAllowsCourtOrdering(booking, now = new Date()) {
   if (!booking || !isActiveBookingStatus(booking.status)) return false;
 
-  const dateStr = normalizeBookingDate(booking.date);
-  const todayStr = format(now, "yyyy-MM-dd");
-  if (!dateStr || dateStr !== todayStr) return false;
+  const timeRange = parseBookingTimeRange(booking);
+  if (!timeRange) return false;
 
-  const dayStart = startOfDay(now);
-  const dayEnd = endOfDay(now);
-  return now >= dayStart && now <= dayEnd;
+  const { start, end } = timeRange;
+  return now >= start && now <= end;
 }
 
 /** @deprecated alias */

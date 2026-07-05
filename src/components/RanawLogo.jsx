@@ -1,5 +1,4 @@
 import { BRAND_NAME } from "../lib/brand";
-import logoSrc from "../assets/ranaw-logo.png";
 
 const VARIANTS = {
   nav: "h-12 sm:h-14 w-auto max-w-[200px] sm:max-w-[260px] object-contain",
@@ -19,7 +18,7 @@ const PRIORITY_VARIANTS = new Set(["auth", "authCard"]);
 export default function RanawLogo({
   variant = "nav",
   className = "",
-  alt = BRAND_NAME,
+  alt = "Ranaw Pickleball Court",
   highlight,
 }) {
   const sizeClass = VARIANTS[variant] || VARIANTS.nav;
@@ -28,7 +27,7 @@ export default function RanawLogo({
 
   const img = (
     <img
-      src={logoSrc}
+      src="/assets/ranaw-logo.png"
       alt={alt}
       width={629}
       height={396}

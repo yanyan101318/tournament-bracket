@@ -6,8 +6,9 @@ import { format } from 'date-fns';
  * Creates the specialized multi-section Analytics Dashboard export.
  * @param {Object} data - The raw data state from the Analytics component.
  * @param {string} filename - Custom filename
+ * @param {string} dateLabel - Label describing the date range of the report
  */
-export const generateAnalyticsExcel = async (data, filename = 'Analytics_Dashboard_Report') => {
+export const generateAnalyticsExcel = async (data, filename = 'Analytics_Dashboard_Report', dateLabel = 'All Time') => {
   if (!data) throw new Error("No data available to export");
 
   const workbook = new ExcelJS.Workbook();
@@ -104,7 +105,7 @@ export const generateAnalyticsExcel = async (data, filename = 'Analytics_Dashboa
 
   worksheet.mergeCells(`A${currentRow}:C${currentRow}`);
   cell = worksheet.getCell(`A${currentRow}`);
-  cell.value = `Report Date: ${format(new Date(), 'MMMM d, yyyy')} | Facility Snapshot: ${data.courtCount} courts`;
+  cell.value = `Export Date: ${format(new Date(), 'MMM d, yyyy h:mm a')} | Filter Range: ${dateLabel} | Facility Snapshot: ${data.courtCount} courts`;
   cell.font = { name: 'Arial', size: 10, color: { argb: 'FF64748B' } };
   cell.alignment = { vertical: 'middle', horizontal: 'center' };
   currentRow++;
@@ -116,7 +117,8 @@ export const generateAnalyticsExcel = async (data, filename = 'Analytics_Dashboa
   addSectionHeader('1. KEY METRICS SUMMARY');
   addTableHeaders(['Metric', 'Value']);
   addDataRow(['Total Bookings', data.bookings?.length || 0]);
-  addDataRow(['Total Revenue', data.revenue || 0], ['', 'currency']);
+  addDataRow(['Court Revenue', data.revenue || 0], ['', 'currency']);
+  addDataRow(['Equipment Revenue', data.equipmentRevenue || 0], ['', 'currency']);
   addDataRow(['Registered Players', data.userCount || 0]);
   addDataRow(['Payment Records', data.payments?.length || 0]);
 
@@ -188,6 +190,18 @@ export const generateAnalyticsExcel = async (data, filename = 'Analytics_Dashboa
     addDataRow([method, count, count / totalBookingPay], ['text', 'number', 'percent']);
   });
   addDataRow(['Total', bookingPaySum, 1], ['text', 'number', 'percent'], true);
+
+  // --- 8. MOST BORROWED EQUIPMENT ---
+  addSectionHeader('8. MOST BORROWED EQUIPMENT');
+  addTableHeaders(['Equipment Name', 'Quantity Borrowed', 'Percentage']);
+  const equipmentEntries = Object.entries(data.mostBorrowedEquipment || {}).sort((a, b) => b[1] - a[1]);
+  const totalEquipmentQty = equipmentEntries.reduce((acc, [_, count]) => acc + count, 0) || 1;
+  let equipmentSum = 0;
+  equipmentEntries.forEach(([name, count]) => {
+    equipmentSum += count;
+    addDataRow([name, count, count / totalEquipmentQty], ['text', 'number', 'percent']);
+  });
+  addDataRow(['Total', equipmentSum, 1], ['text', 'number', 'percent'], true);
 
   // Adjust column widths
   worksheet.getColumn(1).width = 30;

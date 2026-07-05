@@ -54,7 +54,9 @@ function isSlotInPast(dateStr, timeStr) {
   const [yy, M, d] = dateStr.split('-');
   const slotDate = new Date(parseInt(yy, 10), parseInt(M, 10) - 1, parseInt(d, 10), hh, mm, 0);
 
-  return slotDate < new Date();
+  // Treat the slot as past only after 1 hour has elapsed
+  const endOfSlot = new Date(slotDate.getTime() + 60 * 60 * 1000);
+  return endOfSlot < new Date();
 }
 
 function format24to12(time24) {
@@ -680,7 +682,7 @@ export default function Book() {
       });
 
       if (adminMode && String(form.contactNumber).trim()) {
-        const smsMsg = `Assalamu alaikum! RANAW PICKLEBALL COURT: Your booking has been confirmed for ${form.date} at ${actualTimeSlot}. Court ${court?.name || form.courtId}. Please arrive 15 minutes before your scheduled time. Shukran!!!`;
+        const smsMsg = `Assalamu alaikum! RANAW PICKLEBALL COURT: Your booking has been confirmed for ${form.date} at ${actualTimeSlot}. Court ${court?.name || form.courtId}. Please arrive 15 minutes before your scheduled time. Shukran!!!.`;
         try {
           await sendBookingSMS(bookingRef.id, String(form.contactNumber).trim(), smsMsg);
         } catch (e) {
@@ -1032,7 +1034,7 @@ export default function Book() {
                           onChange={(e) => setForm({ ...form, date: e.target.value, timeSlot: "", customStartTime: "" })}
                         />
                       </div>
-                      
+
                       {!isTournamentDay && (
                         <div>
                           <label className="label">Duration</label>
@@ -1073,81 +1075,81 @@ export default function Book() {
                     ) : (
                       <>
 
-                    <div className="flex items-center justify-between mb-2">
-                      <label className="label mb-0">Start Time</label>
-                      {adminMode && (
-                        <label className="flex items-center gap-2 text-sm text-slate-400 cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={form.isCustomTime}
-                            onChange={(e) => setForm({ ...form, isCustomTime: e.target.checked, timeSlot: "", customStartTime: "" })}
-                            className="rounded border-slate-700 bg-slate-800 text-green-500 focus:ring-green-500"
-                          />
-                          Custom Time
-                        </label>
-                      )}
-                    </div>
-
-                    {form.isCustomTime ? (
-                      <div className="mb-4">
-                        <input
-                          type="time"
-                          className="input-field max-w-[200px]"
-                          value={form.customStartTime}
-                          onChange={(e) => setForm({ ...form, customStartTime: e.target.value })}
-                        />
-                      </div>
-                    ) : (
-                      <>
-                        <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
-                          {TIME_SLOTS.map((slot) => {
-                            const inPast = isSlotInPast(form.date, slot);
-                            const isSlotOccupied = !isSlotStartAvailableForDuration(slot, 0.25, dayBookings);
-                            const isTaken = !inPast && !isSlotStartAvailableForDuration(
-                              slot,
-                              actualDuration,
-                              dayBookings
-                            );
-                            const outOfHours = !isSlotWithinCourtHours(slot, actualDuration, court);
-                            const isOpenPlay = isSlotDuringOpenPlay(slot, actualDuration, form.date, court?.rawCourt);
-                            const isOverlap = isTaken && !isSlotOccupied;
-                            const isUnavailable = inPast || isTaken || outOfHours || isOpenPlay;
-
-                            return (
-                              <button
-                                key={slot}
-                                type="button"
-                                disabled={isUnavailable}
-                                onClick={() => setForm({ ...form, timeSlot: slot })}
-                                className={`py-2.5 px-3 rounded-xl text-xs font-medium transition-all ${isUnavailable ? "bg-red-500/10 border border-red-500/20 text-red-400/50 cursor-not-allowed" :
-                                  form.timeSlot === slot ? "bg-green-500 text-slate-950 glow-green" :
-                                    "bg-slate-800 text-slate-400 hover:bg-slate-700 hover:text-white border border-slate-700"
-                                  }`}
-                                title={isOpenPlay ? "This court is reserved for Open Play during this time" : ""}
-                              >
-                                {slot}
-                                {isSlotOccupied && <div className="text-[10px] leading-tight mt-0.5">Booked</div>}
-                                {isOverlap && !isSlotOccupied && <div className="text-[10px] leading-tight mt-0.5">Conflicts</div>}
-                                {inPast && !isSlotOccupied && <div className="text-[10px] leading-tight mt-0.5">Not Available</div>}
-                                {isOpenPlay && !isSlotOccupied && !inPast && <div className="text-[10px] leading-tight mt-0.5 text-indigo-400/70">Open Play</div>}
-                              </button>
-                            );
-                          })}
+                        <div className="flex items-center justify-between mb-2">
+                          <label className="label mb-0">Start Time</label>
+                          {adminMode && (
+                            <label className="flex items-center gap-2 text-sm text-slate-400 cursor-pointer">
+                              <input
+                                type="checkbox"
+                                checked={form.isCustomTime}
+                                onChange={(e) => setForm({ ...form, isCustomTime: e.target.checked, timeSlot: "", customStartTime: "" })}
+                                className="rounded border-slate-700 bg-slate-800 text-green-500 focus:ring-green-500"
+                              />
+                              Custom Time
+                            </label>
+                          )}
                         </div>
-                        <div className="text-xs text-slate-500 mt-3">
-                          <p>Booked = this time slot is already reserved. Conflicts = this start time would overlap an existing booking for the selected duration.</p>
-                        </div>
+
+                        {form.isCustomTime ? (
+                          <div className="mb-4">
+                            <input
+                              type="time"
+                              className="input-field max-w-[200px]"
+                              value={form.customStartTime}
+                              onChange={(e) => setForm({ ...form, customStartTime: e.target.value })}
+                            />
+                          </div>
+                        ) : (
+                          <>
+                            <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
+                              {TIME_SLOTS.map((slot) => {
+                                const inPast = isSlotInPast(form.date, slot);
+                                const isSlotOccupied = !isSlotStartAvailableForDuration(slot, 0.25, dayBookings);
+                                const isTaken = !inPast && !isSlotStartAvailableForDuration(
+                                  slot,
+                                  actualDuration,
+                                  dayBookings
+                                );
+                                const outOfHours = !isSlotWithinCourtHours(slot, actualDuration, court);
+                                const isOpenPlay = isSlotDuringOpenPlay(slot, actualDuration, form.date, court?.rawCourt);
+                                const isOverlap = isTaken && !isSlotOccupied;
+                                const isUnavailable = inPast || isTaken || outOfHours || isOpenPlay;
+
+                                return (
+                                  <button
+                                    key={slot}
+                                    type="button"
+                                    disabled={isUnavailable}
+                                    onClick={() => setForm({ ...form, timeSlot: slot })}
+                                    className={`py-2.5 px-3 rounded-xl text-xs font-medium transition-all ${isUnavailable ? "bg-red-500/10 border border-red-500/20 text-red-400/50 cursor-not-allowed" :
+                                      form.timeSlot === slot ? "bg-green-500 text-slate-950 glow-green" :
+                                        "bg-slate-800 text-slate-400 hover:bg-slate-700 hover:text-white border border-slate-700"
+                                      }`}
+                                    title={isOpenPlay ? "This court is reserved for Open Play during this time" : ""}
+                                  >
+                                    {slot}
+                                    {isSlotOccupied && <div className="text-[10px] leading-tight mt-0.5">Booked</div>}
+                                    {isOverlap && !isSlotOccupied && <div className="text-[10px] leading-tight mt-0.5">Conflicts</div>}
+                                    {inPast && !isSlotOccupied && <div className="text-[10px] leading-tight mt-0.5">Not Available</div>}
+                                    {isOpenPlay && !isSlotOccupied && !inPast && <div className="text-[10px] leading-tight mt-0.5 text-indigo-400/70">Open Play</div>}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                            <div className="text-xs text-slate-500 mt-3">
+                              <p>Booked = this time slot is already reserved. Conflicts = this start time would overlap an existing booking for the selected duration.</p>
+                            </div>
+                          </>
+                        )}
+
+                        {calculatedEndTime && (
+                          <div className="mt-4 p-3 rounded-lg bg-slate-800/50 border border-slate-700 flex items-center gap-2">
+                            <Clock size={16} className="text-cyan-400" />
+                            <span className="text-slate-300 text-sm">Calculated End Time:</span>
+                            <strong className="text-white">{calculatedEndTime}</strong>
+                          </div>
+                        )}
                       </>
-                    )}
-
-                    {calculatedEndTime && (
-                      <div className="mt-4 p-3 rounded-lg bg-slate-800/50 border border-slate-700 flex items-center gap-2">
-                        <Clock size={16} className="text-cyan-400" />
-                        <span className="text-slate-300 text-sm">Calculated End Time:</span>
-                        <strong className="text-white">{calculatedEndTime}</strong>
-                      </div>
-                    )}
-                    </>
                     )}
                   </div>
 

@@ -192,7 +192,7 @@ export default function ScorerPageV2() {
       score1: match.score1 || 0,
       score2: match.score2 || 0,
       servingTeam: match.servingTeam || 1,
-      firstServer: match.firstServer !== undefined ? match.firstServer : true,
+      firstServer: match.firstServer !== undefined ? match.firstServer : false,
     };
     
     undoStackRef.current.push(currentState);
@@ -334,6 +334,27 @@ export default function ScorerPageV2() {
           </div>
         )}
 
+        <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '1rem' }}>
+          <button
+            type="button"
+            onClick={() => setCourtsSwapped(v => !v)}
+            disabled={saving}
+            style={{
+              padding: "8px 16px",
+              fontSize: "0.82rem",
+              fontWeight: 700,
+              borderRadius: "10px",
+              border: "1px solid #c8e63a55",
+              background: "linear-gradient(145deg, #1a2410, #121a0c)",
+              color: "var(--pickle)",
+              cursor: saving ? "not-allowed" : "pointer",
+              boxShadow: "0 0 0 1px rgba(200,230,58,0.08)",
+            }}
+          >
+            ⇄ Change court (visual)
+          </button>
+        </div>
+
         <div className="sp-scoreboard">
           
           {/* TEAM 1 */}
@@ -343,7 +364,7 @@ export default function ScorerPageV2() {
               {match.team1Name || "TBD"}
               {(match.servingTeam || 1) === 1 && (
                 <div style={{fontSize: "0.7rem", color: "var(--pickle)", marginTop: "4px", fontWeight: "600", textTransform: "uppercase", letterSpacing: "0.5px"}}>
-                  {(match.firstServer !== undefined ? match.firstServer : true) ? "🎾 1ST SERVER" : "🎾 2ND SERVER"}
+                  {(match.firstServer !== undefined ? match.firstServer : false) ? "🎾 1ST SERVER" : "🎾 2ND SERVER"}
                 </div>
               )}
             </div>
@@ -384,7 +405,7 @@ export default function ScorerPageV2() {
               {match.team2Name || "TBD"}
               {(match.servingTeam || 1) === 2 && (
                 <div style={{fontSize: "0.7rem", color: "var(--pickle)", marginTop: "4px", fontWeight: "600", textTransform: "uppercase", letterSpacing: "0.5px"}}>
-                  {(match.firstServer !== undefined ? match.firstServer : true) ? "🎾 1ST SERVER" : "🎾 2ND SERVER"}
+                  {(match.firstServer !== undefined ? match.firstServer : false) ? "🎾 1ST SERVER" : "🎾 2ND SERVER"}
                 </div>
               )}
             </div>
@@ -434,7 +455,7 @@ export default function ScorerPageV2() {
           </div>
           <div>
             <span style={{color: "var(--text-muted)", fontSize: "0.75rem", textTransform: "uppercase"}}>
-              {(match.firstServer !== undefined ? match.firstServer : true) ? "1st Server" : "2nd Server"}
+              {(match.firstServer !== undefined ? match.firstServer : false) ? "1st Server" : "2nd Server"}
             </span>
           </div>
         </div>

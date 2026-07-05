@@ -1,7 +1,19 @@
 import { useState, useEffect } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { subscribeToTournamentV2, subscribeToMatchesV2, subscribeToTeams, subscribeToPools, subscribeToDivisions } from "../services/tournamentV2Service";
+import { useSystemCourts } from "../hooks/useSystemCourts";
 import RanawLogo from "../components/RanawLogo";
+
+const neonColors = [
+  { color: '#F5DEB3', glow: 'rgba(245, 222, 179, 0.5)', bgOuter: 'rgba(245, 222, 179, 0.1)', bgInner: 'rgba(245, 222, 179, 0.2)' },
+  { color: '#FF1493', glow: 'rgba(255, 20, 147, 0.5)', bgOuter: 'rgba(255, 20, 147, 0.1)', bgInner: 'rgba(255, 20, 147, 0.2)' },
+  { color: '#00FFFF', glow: 'rgba(0, 255, 255, 0.5)', bgOuter: 'rgba(0, 255, 255, 0.1)', bgInner: 'rgba(0, 255, 255, 0.2)' },
+  { color: '#39FF14', glow: 'rgba(57, 255, 20, 0.5)', bgOuter: 'rgba(57, 255, 20, 0.1)', bgInner: 'rgba(57, 255, 20, 0.2)' },
+  { color: '#FF9900', glow: 'rgba(255, 153, 0, 0.5)', bgOuter: 'rgba(255, 153, 0, 0.1)', bgInner: 'rgba(255, 153, 0, 0.2)' },
+  { color: '#B026FF', glow: 'rgba(176, 38, 255, 0.5)', bgOuter: 'rgba(176, 38, 255, 0.1)', bgInner: 'rgba(176, 38, 255, 0.2)' },
+  { color: '#FF3131', glow: 'rgba(255, 49, 49, 0.5)', bgOuter: 'rgba(255, 49, 49, 0.1)', bgInner: 'rgba(255, 49, 49, 0.2)' },
+  { color: '#0096FF', glow: 'rgba(0, 150, 255, 0.5)', bgOuter: 'rgba(0, 150, 255, 0.1)', bgInner: 'rgba(0, 150, 255, 0.2)' },
+];
 
 function formatPlayerNames(team) {
   if (!team || (!team.player1 && !team.player2)) return { p1: "TBD", p2: "" };
@@ -19,6 +31,7 @@ export default function LedWallV2() {
   const [pools, setPools] = useState([]);
   const [divisions, setDivisions] = useState([]);
   const [loading, setLoading] = useState(true);
+  const { courts: systemCourts, loading: courtsLoading } = useSystemCourts();
   const [focusedCourt, setFocusedCourt] = useState(null);
 
   useEffect(() => {
@@ -33,7 +46,7 @@ export default function LedWallV2() {
     return () => { unsubT(); unsubM(); unsubTm(); unsubP(); unsubD(); };
   }, [id]);
 
-  if (loading) {
+  if (loading || courtsLoading) {
     return <div className="min-h-screen bg-black flex items-center justify-center text-white text-2xl font-black tracking-widest uppercase">Loading LED Wall...</div>;
   }
 
@@ -42,13 +55,13 @@ export default function LedWallV2() {
   }
 
   // Get active match for a specific court
-  const getActiveMatch = (courtNum) => {
-    return matches.find(m => String(m.courtNumber) === String(courtNum) && m.status !== 'completed');
+  const getActiveMatch = (courtId) => {
+    return matches.find(m => String(m.courtNumber) === String(courtId) && m.status !== 'completed');
   };
 
   // Get next match assigned to a court
-  const getNextMatch = (courtNum, activeMatchId) => {
-    const upcoming = matches.filter(m => String(m.courtNumber) === String(courtNum) && m.status === 'scheduled' && m.id !== activeMatchId);
+  const getNextMatch = (courtId, activeMatchId) => {
+    const upcoming = matches.filter(m => String(m.courtNumber) === String(courtId) && m.status === 'scheduled' && m.id !== activeMatchId);
     // Sort by poolId (so initial brackets go first) then matchNum
     upcoming.sort((a, b) => {
       if (a.poolId && !b.poolId) return -1;
@@ -58,8 +71,7 @@ export default function LedWallV2() {
     return upcoming[0];
   };
 
-  const courts = [1, 2, 3, 4, 5, 6];
-  const displayedCourts = focusedCourt ? [focusedCourt] : courts;
+  const displayedCourts = focusedCourt ? systemCourts.filter(c => c.id === focusedCourt) : systemCourts;
 
   return (
     <div className="min-h-screen bg-black text-white flex flex-col font-sans overflow-hidden">
@@ -93,9 +105,10 @@ export default function LedWallV2() {
       </div>
 
       <div className={`flex-1 grid gap-4 p-4 bg-[#0a0f18] ${focusedCourt ? 'grid-cols-1 grid-rows-1' : 'grid-cols-3 grid-rows-2'}`}>
-        {displayedCourts.map(courtNum => {
-          const activeMatch = getActiveMatch(courtNum);
-          const nextMatch = getNextMatch(courtNum, activeMatch?.id);
+        {displayedCourts.map((court, index) => {
+          const activeMatch = getActiveMatch(court.id);
+          const nextMatch = getNextMatch(court.id, activeMatch?.id);
+          const theme = neonColors[index % neonColors.length];
           
           let t1Names = { p1: "TBD", p2: "" };
           let t2Names = { p1: "TBD", p2: "" };
@@ -150,16 +163,17 @@ export default function LedWallV2() {
 
           return (
             <div 
-              key={courtNum} 
+              key={court.id} 
               onClick={() => {
-                if (!focusedCourt) setFocusedCourt(courtNum);
+                if (!focusedCourt) setFocusedCourt(court.id);
               }}
-              className={`rounded-3xl border-2 flex flex-col overflow-hidden relative shadow-2xl transition-all duration-500 ${hasMatch ? 'bg-[#121b29] border-slate-700 hover:border-[#CCFF00]/50' : 'bg-black/50 border-slate-900'} ${!focusedCourt ? 'cursor-pointer' : ''}`}
+              className={`rounded-3xl border-2 flex flex-col overflow-hidden relative shadow-2xl transition-all duration-500 ${hasMatch ? '' : 'bg-black/50 border-slate-900'} ${!focusedCourt ? 'cursor-pointer' : ''}`}
+              style={hasMatch ? { backgroundColor: theme.bgOuter, borderColor: theme.color, boxShadow: `0 0 20px ${theme.glow}` } : {}}
             >
               
-              <div className={`py-3 text-center border-b-2 flex flex-col justify-center items-center ${hasMatch ? 'bg-[#152336] border-slate-700' : 'bg-slate-900 border-slate-900'}`}>
-                <h2 className={`text-4xl ${focusedCourt ? 'text-6xl' : ''} font-black tracking-[0.2em] uppercase m-0 leading-none transition-all ${hasMatch ? 'text-[#CCFF00]' : 'text-slate-600'}`}>
-                  COURT {courtNum}
+              <div className={`py-3 text-center border-b-2 flex flex-col justify-center items-center ${hasMatch ? '' : 'bg-slate-900 border-slate-900'}`} style={hasMatch ? { backgroundColor: theme.bgInner, borderColor: theme.color } : {}}>
+                <h2 className={`text-4xl ${focusedCourt ? 'text-6xl' : ''} font-black tracking-[0.2em] uppercase m-0 leading-none transition-all ${!hasMatch ? 'text-slate-600' : ''}`} style={hasMatch ? { color: theme.color } : {}}>
+                  {court.name}
                 </h2>
                 {hasMatch && (
                   <div className={`text-xs ${focusedCourt ? 'text-xl mt-2' : 'mt-1'} font-bold text-cyan-400 uppercase tracking-widest`}>
@@ -175,7 +189,7 @@ export default function LedWallV2() {
                     <div className={`flex flex-col items-center justify-center text-center ${isTbd ? 'opacity-50' : ''} ${focusedCourt ? 'w-[40%]' : 'w-[32%]'}`}>
                       <div className={`font-bold leading-tight uppercase text-white break-words drop-shadow-md flex flex-col items-center justify-center ${focusedCourt ? 'text-6xl' : 'text-3xl'}`}>
                         <span>{t1Names.p1}</span>
-                        {t1Names.p2 && <span className={`text-[#CCFF00] font-black ${focusedCourt ? 'text-4xl my-2' : 'text-xl my-1'}`}>&</span>}
+                        {t1Names.p2 && <span className={`font-black ${focusedCourt ? 'text-4xl my-2' : 'text-xl my-1'}`} style={{ color: theme.color }}>&</span>}
                         {t1Names.p2 && <span>{t1Names.p2}</span>}
                       </div>
                     </div>
@@ -183,11 +197,11 @@ export default function LedWallV2() {
                     {/* SCORE */}
                     <div className={`flex flex-col items-center justify-center shrink-0 ${focusedCourt ? 'w-[20%]' : 'w-[36%]'}`}>
                       <div className="flex items-center justify-center gap-4 w-full">
-                        <div className={`font-black text-[#CCFF00] drop-shadow-[0_0_15px_rgba(204,255,0,0.5)] flex-1 text-right ${focusedCourt ? 'text-[12rem]' : 'text-7xl xl:text-8xl'}`}>
+                        <div className={`font-black flex-1 text-right ${focusedCourt ? 'text-[12rem]' : 'text-7xl xl:text-8xl'}`} style={{ color: theme.color, filter: `drop-shadow(0 0 15px ${theme.glow})` }}>
                           {activeMatch.score1 || 0}
                         </div>
                         <div className={`text-slate-500 font-black shrink-0 ${focusedCourt ? 'text-8xl' : 'text-5xl'}`}>-</div>
-                        <div className={`font-black text-[#CCFF00] drop-shadow-[0_0_15px_rgba(204,255,0,0.5)] flex-1 text-left ${focusedCourt ? 'text-[12rem]' : 'text-7xl xl:text-8xl'}`}>
+                        <div className={`font-black flex-1 text-left ${focusedCourt ? 'text-[12rem]' : 'text-7xl xl:text-8xl'}`} style={{ color: theme.color, filter: `drop-shadow(0 0 15px ${theme.glow})` }}>
                           {activeMatch.score2 || 0}
                         </div>
                       </div>
@@ -200,15 +214,15 @@ export default function LedWallV2() {
                     <div className={`flex flex-col items-center justify-center text-center ${isTbd ? 'opacity-50' : ''} ${focusedCourt ? 'w-[40%]' : 'w-[32%]'}`}>
                       <div className={`font-bold leading-tight uppercase text-white break-words drop-shadow-md flex flex-col items-center justify-center ${focusedCourt ? 'text-6xl' : 'text-3xl'}`}>
                         <span>{t2Names.p1}</span>
-                        {t2Names.p2 && <span className={`text-[#CCFF00] font-black ${focusedCourt ? 'text-4xl my-2' : 'text-xl my-1'}`}>&</span>}
+                        {t2Names.p2 && <span className={`font-black ${focusedCourt ? 'text-4xl my-2' : 'text-xl my-1'}`} style={{ color: theme.color }}>&</span>}
                         {t2Names.p2 && <span>{t2Names.p2}</span>}
                       </div>
                     </div>
                   </div>
 
                   {/* NEXT UP BAR */}
-                  <div className={`bg-[#0f1722] border-t border-slate-800 text-center flex items-center justify-center gap-3 ${focusedCourt ? 'py-6 px-8' : 'py-2 px-4'}`}>
-                    <span className={`text-amber-500 font-bold tracking-widest uppercase ${focusedCourt ? 'text-2xl' : 'text-sm'}`}>UP NEXT:</span>
+                  <div className={`border-t text-center flex items-center justify-center gap-3 ${focusedCourt ? 'py-6 px-8' : 'py-2 px-4'}`} style={{ backgroundColor: 'rgba(0,0,0,0.3)', borderColor: theme.color }}>
+                    <span className={`font-bold tracking-widest uppercase ${focusedCourt ? 'text-2xl' : 'text-sm'}`} style={{ color: theme.color }}>UP NEXT:</span>
                     <span className={`text-slate-300 font-semibold truncate uppercase ${focusedCourt ? 'text-2xl' : 'text-sm'}`}>
                       {nextMatch ? nextNames : "NO MATCH SCHEDULED"}
                     </span>

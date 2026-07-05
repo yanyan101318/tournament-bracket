@@ -41,6 +41,7 @@ import KioskPage from "./pages/KioskPage";
 import PaddleViewerPage from "./pages/PaddleViewerPage";
 import PaddleScorerPage from "./pages/PaddleScorerPage";
 import ExportExamples from "./pages/ExportExamples";
+import CourtFoodOrderingPage from "./pages/CourtFoodOrderingPage";
 
 import "./App.css";
 import "./admin/admin.css";
@@ -81,6 +82,7 @@ export default function App() {
             <Route path="/paddle-viewer" element={<PaddleViewerPage />} />
             <Route path="/paddle-score/:courtId?" element={<PaddleScorerPage />} />
             <Route path="/export-examples" element={<ExportExamples />} />
+            <Route path="/court-order/:courtId?" element={<CourtFoodOrderingPage />} />
 
             {/* ── ADMIN PANEL ── */}
             <Route path="/admin" element={

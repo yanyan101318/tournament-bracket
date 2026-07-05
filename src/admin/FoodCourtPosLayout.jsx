@@ -34,7 +34,6 @@ import {
 export default function FoodCourtPosLayout() {
   const [orders, setOrders] = useState([]);
   const [stores, setStores] = useState([]);
-  const [queueTab, setQueueTab] = useState("online");
   const [selected, setSelected] = useState(null);
   const [paymentMethod, setPaymentMethod] = useState("Cash");
   const [cashReceived, setCashReceived] = useState("");
@@ -81,11 +80,10 @@ export default function FoodCourtPosLayout() {
 
     return {
       onlineQueue: pending.filter((o) => o.orderSource !== ORDER_SOURCE.WALK_IN),
-      walkinQueue: pending.filter((o) => o.orderSource === ORDER_SOURCE.WALK_IN),
     };
   }, [orders]);
 
-  const queueOrders = queueTab === "walkin" ? walkinQueue : onlineQueue;
+  const queueOrders = onlineQueue;
 
   const breakdown = useMemo(() => {
     if (!selected) return null;
@@ -250,23 +248,7 @@ export default function FoodCourtPosLayout() {
   return (
     <div className="fc-pos-layout">
       <div className="fc-pos-col fc-pos-queue">
-        <h3 className="fc-pos-heading">Incoming orders</h3>
-        <div className="flex gap-1 mb-3">
-          <button
-            type="button"
-            className={`flex-1 py-2 text-xs font-bold rounded-lg ${queueTab === "online" ? "bg-cyan-500 text-slate-950" : "bg-slate-800 text-slate-400"}`}
-            onClick={() => setQueueTab("online")}
-          >
-            Online {onlineQueue.length > 0 ? `(${onlineQueue.length})` : ""}
-          </button>
-          <button
-            type="button"
-            className={`flex-1 py-2 text-xs font-bold rounded-lg ${queueTab === "walkin" ? "bg-cyan-500 text-slate-950" : "bg-slate-800 text-slate-400"}`}
-            onClick={() => setQueueTab("walkin")}
-          >
-            Walk-in {walkinQueue.length > 0 ? `(${walkinQueue.length})` : ""}
-          </button>
-        </div>
+        <h3 className="fc-pos-heading mb-3">Incoming orders</h3>
         <div className="fc-pos-scroll">
           {queueOrders.length === 0 && (
             <div className="text-center text-slate-500 text-sm p-6 border border-dashed border-slate-700 rounded-xl">

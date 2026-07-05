@@ -37,11 +37,14 @@ import {
   getRentRentalCaption,
 } from "./inventoryHelpers";
 import { downloadEquipmentInventoryPdf } from "../lib/adminPdfReports";
+import { exportEquipmentReportsExcel } from "../lib/adminExcelReports";
 import { sendBookingSMS } from "../lib/smsService";
+import UniversalReceipt from "../components/UniversalReceipt";
 
 const TABS = [
   { id: "dashboard", label: "Dashboard" },
   { id: "catalog", label: "Catalog" },
+  { id: "sell", label: "Sell" },
   { id: "borrowing", label: "Renting" },
   { id: "reports", label: "Reports" },
 ];
@@ -57,8 +60,10 @@ const BLANK_ITEM = {
   category: "",
   notes: "",
   totalQty: "",
+  type: "rent",
   pricePerHour: "",
   overdueFinePerHour: "",
+  salePrice: "",
 };
 
 function RentBillableHoursCell({ rent }) {
@@ -103,11 +108,13 @@ export default function InventoryPage() {
   // Pagination: one state per table
   const PAGE_SIZE = 10;
   const [dashRentPage, setDashRentPage] = useState(1);
-  const [catalogPage, setCatalogPage] = useState(1);
+  const [catalogRentPage, setCatalogRentPage] = useState(1);
+  const [catalogSalePage, setCatalogSalePage] = useState(1);
   const [activeRentPage, setActiveRentPage] = useState(1);
   const [historyPage, setHistoryPage] = useState(1);
+  const [salesHistoryPage, setSalesHistoryPage] = useState(1);
 
-  function handleTabChange(t) { setTab(t); setDashRentPage(1); setCatalogPage(1); setActiveRentPage(1); setHistoryPage(1); }
+  function handleTabChange(t) { setTab(t); setDashRentPage(1); setCatalogRentPage(1); setCatalogSalePage(1); setActiveRentPage(1); setHistoryPage(1); setSalesHistoryPage(1); }
 
   const [itemModal, setItemModal] = useState(null);
   const [itemForm, setItemForm] = useState(BLANK_ITEM);
@@ -124,6 +131,12 @@ export default function InventoryPage() {
   const [extendHours, setExtendHours] = useState(1);
 
   const [reportPeriod, setReportPeriod] = useState("weekly");
+
+  const [salesRecords, setSalesRecords] = useState([]);
+  const [sellForm, setSellForm] = useState({ buyerName: "", itemId: "", quantity: 1, cashReceived: "" });
+  const [receiptData, setReceiptData] = useState(null);
+  const [returnModal, setReturnModal] = useState(null);
+  const [returnCashReceived, setReturnCashReceived] = useState("");
 
   useEffect(() => {
     const qi = query(collection(db, "inventoryItems"), orderBy("name", "asc"));
@@ -147,10 +160,15 @@ export default function InventoryPage() {
     const unsubC = onSnapshot(qc, (snap) => {
       setCourts(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
     });
+    const qs = query(collection(db, "salesRecords"), orderBy("createdAt", "desc"));
+    const unsubS = onSnapshot(qs, { includeMetadataChanges: true }, (snap) => {
+      setSalesRecords(snap.docs.map((d) => ({ id: d.id, hasPendingWrites: d.metadata.hasPendingWrites, ...d.data() })));
+    });
     return () => {
       unsubI();
       unsubB();
       unsubC();
+      unsubS();
     };
   }, []);
 
@@ -184,6 +202,9 @@ export default function InventoryPage() {
     for (const it of items) m[it.id] = it;
     return m;
   }, [items]);
+
+  const rentItems = useMemo(() => items.filter(it => it.type === 'rent' || it.type === 'both' || !it.type), [items]);
+  const saleItems = useMemo(() => items.filter(it => it.type === 'sale' || it.type === 'both'), [items]);
 
   const rentPreviewLines = useMemo(() => {
     return rentLines
@@ -237,6 +258,15 @@ export default function InventoryPage() {
     [rents, reportRange]
   );
 
+  const reportFilteredSales = useMemo(
+    () => salesRecords.filter((r) => {
+      const t = tsToDate(r.createdAt) || (r.timestampMs ? new Date(r.timestampMs) : null);
+      if (!t) return false;
+      return t >= reportRange.start && t <= reportRange.end;
+    }),
+    [salesRecords, reportRange]
+  );
+
   const mostBorrowedReport = useMemo(
     () => aggregateMostRented(reportFilteredBorrows, nameById),
     [reportFilteredBorrows, nameById]
@@ -253,6 +283,85 @@ export default function InventoryPage() {
     [activeBorrows]
   );
 
+  const sellTotal = useMemo(() => {
+    if (!sellForm.itemId) return 0;
+    const stock = itemsById[sellForm.itemId];
+    if (!stock) return 0;
+    const qty = Math.max(1, Math.floor(Number(sellForm.quantity) || 1));
+    const price = Number(stock.salePrice) || 0;
+    return qty * price;
+  }, [sellForm, itemsById]);
+
+  async function submitSale(e) {
+    e.preventDefault();
+    if (!sellForm.buyerName.trim()) {
+      toast.error("Customer name is required");
+      return;
+    }
+    if (!sellForm.itemId) {
+      toast.error("Please select an item to sell");
+      return;
+    }
+    const stock = itemsById[sellForm.itemId];
+    const qty = Math.max(1, Math.floor(Number(sellForm.quantity) || 1));
+    if (!stock || (Number(stock.availableQty) || 0) < qty) {
+      toast.error(`Not enough stock for “${stock?.name || "item"}”.`);
+      return;
+    }
+    const cash = Number(sellForm.cashReceived) || 0;
+    if (cash < sellTotal) {
+      toast.error("Cash received must be greater than or equal to the total cost.");
+      return;
+    }
+
+    try {
+      const batch = writeBatch(db);
+      const saleRef = doc(collection(db, "salesRecords"));
+      const receiptId = "EQ-SALE-" + Math.floor(Math.random() * 100000);
+      const now = Date.now();
+      
+      const saleDoc = {
+        receiptId,
+        buyerName: sellForm.buyerName.trim(),
+        itemId: sellForm.itemId,
+        itemName: stock.name,
+        quantity: qty,
+        unitPrice: Number(stock.salePrice) || 0,
+        total: sellTotal,
+        cashReceived: cash,
+        change: cash - sellTotal,
+        createdAt: serverTimestamp(),
+        timestampMs: now,
+      };
+
+      batch.set(saleRef, saleDoc);
+      batch.update(doc(db, "inventoryItems", sellForm.itemId), {
+        availableQty: increment(-qty),
+        updatedAt: serverTimestamp(),
+      });
+
+      await wrapSync(batch.commit(), {
+        successMsg: "Sale recorded successfully!",
+        offlineMsg: "Sale Saved Offline",
+        errorMsg: "Sale failed"
+      });
+
+      setReceiptData({
+        ...saleDoc,
+        date: new Date(now).toLocaleString(),
+        items: [{
+          description: stock.name,
+          qty: qty,
+          unitPrice: Number(stock.salePrice) || 0,
+          total: sellTotal
+        }]
+      });
+
+    } catch (err) {
+      console.error(err);
+    }
+  }
+
   function openNewItem() {
     setItemForm(BLANK_ITEM);
     setItemModal("new");
@@ -264,8 +373,10 @@ export default function InventoryPage() {
       category: it.category || "",
       notes: it.notes || "",
       totalQty: String(it.totalQty ?? 0),
+      type: it.type || "rent",
       pricePerHour: it.pricePerHour != null ? String(it.pricePerHour) : "",
       overdueFinePerHour: it.overdueFinePerHour != null ? String(it.overdueFinePerHour) : "",
+      salePrice: it.salePrice != null ? String(it.salePrice) : "",
     });
     setItemModal(it.id);
   }
@@ -274,8 +385,10 @@ export default function InventoryPage() {
     e.preventDefault();
     const name = itemForm.name.trim();
     const total = Math.max(0, Math.floor(Number(itemForm.totalQty) || 0));
-    const pricePerHour = Math.max(0, Number(itemForm.pricePerHour) || 0);
-    const overdueFinePerHour = Math.max(0, Number(itemForm.overdueFinePerHour) || 0);
+    const pricePerHour = (itemForm.type === 'rent' || itemForm.type === 'both') ? Math.max(0, Number(itemForm.pricePerHour) || 0) : 0;
+    const overdueFinePerHour = (itemForm.type === 'rent' || itemForm.type === 'both') ? Math.max(0, Number(itemForm.overdueFinePerHour) || 0) : 0;
+    const salePrice = (itemForm.type === 'sale' || itemForm.type === 'both') ? Math.max(0, Number(itemForm.salePrice) || 0) : 0;
+    
     if (!name) {
       toast.error("Name is required");
       return;
@@ -289,8 +402,10 @@ export default function InventoryPage() {
           notes: itemForm.notes.trim(),
           totalQty: total,
           availableQty: total,
+          type: itemForm.type,
           pricePerHour,
           overdueFinePerHour,
+          salePrice,
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
         });
@@ -314,8 +429,10 @@ export default function InventoryPage() {
           notes: itemForm.notes.trim(),
           totalQty: newTotal,
           availableQty: newAvailable,
+          type: itemForm.type,
           pricePerHour,
           overdueFinePerHour,
+          salePrice,
           updatedAt: serverTimestamp(),
         });
       }
@@ -488,15 +605,34 @@ export default function InventoryPage() {
     const rentalCharge = getRentScheduledRentalCharge(data);
     const overdueCharge = computeOverdueFine(lines, lateH);
     const totalCharge = roundMoney(rentalCharge + overdueCharge);
-    const confirmMsg =
-      `Process return for “${data.borrowerName}”?\n\n` +
-      `Scheduled rental: ₱${rentalCharge.toFixed(2)}\n` +
-      `Late hours: ${lateH.toFixed(2)}\n` +
-      `Overdue fine: ₱${overdueCharge.toFixed(2)}\n` +
-      `Total due: ₱${totalCharge.toFixed(2)}`;
-    if (!window.confirm(confirmMsg)) return;
+    
+    setReturnCashReceived("");
+    setReturnModal({
+      id: b.id,
+      data,
+      actualTs,
+      lateH,
+      rentalCharge,
+      overdueCharge,
+      totalCharge
+    });
+  }
+
+  async function processReturnConfirm() {
+    if (!returnModal) return;
+    const { id, data, actualTs, lateH, rentalCharge, overdueCharge, totalCharge } = returnModal;
+    
+    if (totalCharge > 0) {
+      const cash = Number(returnCashReceived) || 0;
+      if (cash < totalCharge) {
+        toast.error("Cash received must be greater than or equal to the total due.");
+        return;
+      }
+    }
+
     try {
       const batch = writeBatch(db);
+      const ref = doc(db, "borrowRecords", id);
       batch.update(ref, {
         status: "returned",
         actualReturnAt: actualTs,
@@ -520,6 +656,7 @@ export default function InventoryPage() {
         offlineMsg: "Return Action Saved Offline — Pending Server Sync",
         errorMsg: "Return failed"
       });
+      setReturnModal(null);
     } catch (err) {
       console.error(err);
     }
@@ -584,16 +721,29 @@ export default function InventoryPage() {
           </p>
         </div>
         <div className="flex flex-wrap gap-2 shrink-0">
-          <button
-            type="button"
-            className="ad-btn ad-btn-outline ad-btn-sm"
-            onClick={() => {
-              downloadEquipmentInventoryPdf({ items, stats });
-              toast.success("PDF report downloaded.");
-            }}
-          >
-            Save PDF report
-          </button>
+          {tab === "reports" ? (
+            <button
+              type="button"
+              className="ad-btn ad-btn-outline ad-btn-sm"
+              onClick={() => {
+                exportEquipmentReportsExcel({ reportFilteredBorrows, reportFilteredSales, reportRange });
+                toast.success("Excel report downloaded.");
+              }}
+            >
+              Export Excel Report
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="ad-btn ad-btn-outline ad-btn-sm"
+              onClick={() => {
+                downloadEquipmentInventoryPdf({ items, stats });
+                toast.success("PDF report downloaded.");
+              }}
+            >
+              Save PDF report
+            </button>
+          )}
         </div>
       </div>
 
@@ -786,77 +936,202 @@ export default function InventoryPage() {
               + Add item
             </button>
           </div>
-          <div className="ad-card overflow-hidden">
-            <div className="overflow-x-auto">
-              <table className="ad-table">
-                <thead>
-                  <tr>
-                    <th>Name</th>
-                    <th>Category</th>
-                    <th>Available</th>
-                    <th>Total</th>
-                    <th
-                      className="text-right"
-                      title="Per physical unit, per hour. Scheduled rent = units borrowed × this × billable hours."
-                    >
-                      Rent ₱/hr
-                    </th>
-                    <th className="text-right">Fine ₱/hr</th>
-                    <th />
-                  </tr>
-                </thead>
-                <tbody>
-                  {items.length === 0 && (
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* SALE SECTION */}
+            <div className="ad-card overflow-hidden">
+              <div className="ad-card-header bg-[var(--ad-surface)] border-b border-[var(--ad-border)]">
+                <h3 className="ad-card-title flex items-center gap-2">
+                  <span className="material-symbols-outlined text-amber-400 text-lg">storefront</span>
+                  Equipment for Sale
+                </h3>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="ad-table">
+                  <thead>
                     <tr>
-                      <td colSpan={7} className="ad-empty">
-                        No inventory yet. Add paddles, balls, or nets.
-                      </td>
+                      <th>Name</th>
+                      <th>Price</th>
+                      <th>Stock</th>
+                      <th />
                     </tr>
-                  )}
-                  {items.slice((catalogPage - 1) * PAGE_SIZE, catalogPage * PAGE_SIZE).map((it) => (
-                    <tr key={it.id}>
-                      <td className="ad-td-main">
-                        <div className="flex items-center gap-2">
-                          {it.name}
-                          {it.hasPendingWrites && <span className="ad-badge ad-badge-pending text-[10px] px-1 py-0 border border-amber-500/20">Pending Sync</span>}
-                        </div>
-                      </td>
-                      <td className="text-sm text-[var(--ad-muted)]">{it.category || "—"}</td>
-                      <td className="font-mono text-emerald-400">{it.availableQty ?? 0}</td>
-                      <td className="font-mono">{it.totalQty ?? 0}</td>
-                      <td className="text-right font-mono text-sm">
-                        ₱{(Number(it.pricePerHour) || 0).toFixed(2)}
-                      </td>
-                      <td className="text-right font-mono text-sm text-amber-400/90">
-                        ₱{(Number(it.overdueFinePerHour) || 0).toFixed(2)}
-                      </td>
-                      <td className="text-right whitespace-nowrap">
-                        <button
-                          type="button"
-                          className="ad-btn ad-btn-sm ad-btn-outline mr-1"
-                          onClick={() => openEditItem(it)}
-                        >
-                          Edit
-                        </button>
-                        <button
-                          type="button"
-                          className="ad-btn ad-btn-sm ad-btn-danger"
-                          onClick={() => removeItem(it)}
-                          disabled={syncState !== "idle" && syncState !== "error"}
-                        >
-                          Delete
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {saleItems.length === 0 && (
+                      <tr>
+                        <td colSpan={4} className="ad-empty">
+                          No items for sale.
+                        </td>
+                      </tr>
+                    )}
+                    {saleItems.slice((catalogSalePage - 1) * PAGE_SIZE, catalogSalePage * PAGE_SIZE).map((it) => (
+                      <tr key={it.id}>
+                        <td className="ad-td-main">
+                          <div className="flex flex-col">
+                            <div className="flex items-center gap-2">
+                              {it.name}
+                              {it.hasPendingWrites && <span className="ad-badge ad-badge-pending text-[10px] px-1 py-0 border border-amber-500/20">Pending Sync</span>}
+                            </div>
+                            <span className="text-xs text-[var(--ad-muted)]">{it.category || "—"}</span>
+                          </div>
+                        </td>
+                        <td className="text-sm font-mono text-emerald-400">
+                          ₱{(Number(it.salePrice) || 0).toFixed(2)}
+                        </td>
+                        <td className="font-mono text-sm">
+                          <span className="text-emerald-400">{it.availableQty ?? 0}</span> / {it.totalQty ?? 0}
+                        </td>
+                        <td className="text-right whitespace-nowrap">
+                          <button type="button" className="ad-btn ad-btn-sm ad-btn-outline mr-1" onClick={() => openEditItem(it)}>Edit</button>
+                          <button type="button" className="ad-btn ad-btn-sm ad-btn-danger" onClick={() => removeItem(it)} disabled={syncState !== "idle" && syncState !== "error"}>Del</button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <Pagination page={catalogSalePage} totalPages={Math.max(1, Math.ceil(saleItems.length / PAGE_SIZE))} onPage={setCatalogSalePage} />
             </div>
-            <Pagination
-              page={catalogPage}
-              totalPages={Math.max(1, Math.ceil(items.length / PAGE_SIZE))}
-              onPage={setCatalogPage}
-            />
+
+            {/* RENT SECTION */}
+            <div className="ad-card overflow-hidden">
+              <div className="ad-card-header bg-[var(--ad-surface)] border-b border-[var(--ad-border)]">
+                <h3 className="ad-card-title flex items-center gap-2">
+                  <span className="material-symbols-outlined text-sky-400 text-lg">calendar_clock</span>
+                  Equipment for Rent
+                </h3>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="ad-table">
+                  <thead>
+                    <tr>
+                      <th>Name</th>
+                      <th>Rate/hr</th>
+                      <th>Stock</th>
+                      <th />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rentItems.length === 0 && (
+                      <tr>
+                        <td colSpan={4} className="ad-empty">
+                          No items for rent.
+                        </td>
+                      </tr>
+                    )}
+                    {rentItems.slice((catalogRentPage - 1) * PAGE_SIZE, catalogRentPage * PAGE_SIZE).map((it) => (
+                      <tr key={it.id}>
+                        <td className="ad-td-main">
+                          <div className="flex flex-col">
+                            <div className="flex items-center gap-2">
+                              {it.name}
+                              {it.hasPendingWrites && <span className="ad-badge ad-badge-pending text-[10px] px-1 py-0 border border-amber-500/20">Pending Sync</span>}
+                            </div>
+                            <span className="text-xs text-[var(--ad-muted)]">{it.category || "—"}</span>
+                          </div>
+                        </td>
+                        <td className="text-sm font-mono text-sky-400">
+                          ₱{(Number(it.pricePerHour) || 0).toFixed(2)}
+                        </td>
+                        <td className="font-mono text-sm">
+                          <span className="text-emerald-400">{it.availableQty ?? 0}</span> / {it.totalQty ?? 0}
+                        </td>
+                        <td className="text-right whitespace-nowrap">
+                          <button type="button" className="ad-btn ad-btn-sm ad-btn-outline mr-1" onClick={() => openEditItem(it)}>Edit</button>
+                          <button type="button" className="ad-btn ad-btn-sm ad-btn-danger" onClick={() => removeItem(it)} disabled={syncState !== "idle" && syncState !== "error"}>Del</button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <Pagination page={catalogRentPage} totalPages={Math.max(1, Math.ceil(rentItems.length / PAGE_SIZE))} onPage={setCatalogRentPage} />
+            </div>
+          </div>
+        </section>
+      )}
+
+      {tab === "sell" && (
+        <section className="grid lg:grid-cols-1 gap-6">
+          <div className="ad-card p-4 sm:p-6">
+            <h3 className="text-base font-bold text-[var(--ad-text)] mb-4">New Sale</h3>
+            <form onSubmit={submitSale} className="space-y-4 max-w-2xl">
+              <div className="grid sm:grid-cols-2 gap-4">
+                <div className="af-group">
+                  <label className="af-label">Customer Name *</label>
+                  <input
+                    className="af-input"
+                    value={sellForm.buyerName}
+                    onChange={(e) => setSellForm({ ...sellForm, buyerName: e.target.value })}
+                    placeholder="Buyer's name"
+                    required
+                  />
+                </div>
+                <div className="af-group">
+                  <label className="af-label">Select Item *</label>
+                  <select
+                    className="af-input"
+                    value={sellForm.itemId}
+                    onChange={(e) => setSellForm({ ...sellForm, itemId: e.target.value })}
+                    required
+                  >
+                    <option value="">Select item…</option>
+                    {saleItems.map((it) => (
+                      <option key={it.id} value={it.id}>
+                        {it.name} ({it.availableQty ?? 0} avail.) · ₱{Number(it.salePrice || 0).toFixed(2)}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="af-group">
+                  <label className="af-label">Quantity *</label>
+                  <input
+                    className="af-input"
+                    type="number"
+                    min={1}
+                    value={sellForm.quantity}
+                    onChange={(e) => setSellForm({ ...sellForm, quantity: e.target.value })}
+                    required
+                  />
+                </div>
+                <div className="af-group">
+                  <label className="af-label">Cash Received (₱) *</label>
+                  <input
+                    className="af-input"
+                    type="number"
+                    min={0}
+                    step={0.01}
+                    value={sellForm.cashReceived}
+                    onChange={(e) => setSellForm({ ...sellForm, cashReceived: e.target.value })}
+                    required
+                  />
+                </div>
+              </div>
+              
+              <div className="rounded-xl border border-[var(--ad-border)] bg-[var(--ad-surface)] p-4 max-w-lg mt-4">
+                <div className="flex justify-between items-center mb-2">
+                  <div className="text-[10px] font-bold uppercase tracking-wider text-[var(--ad-muted)]">
+                    Total Amount
+                  </div>
+                  <div className="text-2xl font-black text-[var(--ad-pickle)]">
+                    ₱{sellTotal.toFixed(2)}
+                  </div>
+                </div>
+                {sellForm.cashReceived && Number(sellForm.cashReceived) >= sellTotal && (
+                  <div className="flex justify-between items-center pt-2 border-t border-[var(--ad-border)]">
+                    <div className="text-[10px] font-bold uppercase tracking-wider text-[var(--ad-muted)]">
+                      Change
+                    </div>
+                    <div className="text-lg font-bold text-emerald-400">
+                      ₱{(Number(sellForm.cashReceived) - sellTotal).toFixed(2)}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <button type="submit" className="ad-btn ad-btn-primary" disabled={syncState !== "idle" && syncState !== "error"}>
+                {syncState === "syncing" ? "Processing…" : syncState === "offline-saved" ? "Saved Offline" : "Process Sale & Print Receipt"}
+              </button>
+            </form>
           </div>
         </section>
       )}
@@ -928,7 +1203,7 @@ export default function InventoryPage() {
                         onChange={(e) => setBorrowLine(i, "itemId", e.target.value)}
                       >
                         <option value="">Select item…</option>
-                        {items.map((it) => (
+                        {rentItems.map((it) => (
                           <option key={it.id} value={it.id}>
                             {it.name} ({it.availableQty ?? 0} avail.) · ₱{Number(it.pricePerHour || 0).toFixed(0)}/hr
                           </option>
@@ -1098,78 +1373,125 @@ export default function InventoryPage() {
             </span>
           </div>
 
-          <div className="ad-card overflow-hidden">
-            <div className="ad-card-header">
-              <h3 className="ad-card-title">Renting history ({reportFilteredBorrows.length})</h3>
-            </div>
-            <div className="overflow-x-auto max-h-80">
-              <table className="ad-table">
-                <thead>
-                  <tr>
-                    <th>Borrower</th>
-                    <th>Items</th>
-                    <th>Borrowed</th>
-                    <th>Returned</th>
-                    <th className="text-right">Rental</th>
-                    <th className="text-right">Overdue</th>
-                    <th className="text-right">Total</th>
-                    <th>Status</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {reportFilteredBorrows.length === 0 ? (
-                    <tr>
-                      <td colSpan={8} className="ad-empty">
-                        No rents in this period.
-                      </td>
-                    </tr>
-                  ) : (
-                    reportFilteredBorrows.slice((historyPage - 1) * PAGE_SIZE, historyPage * PAGE_SIZE).map((b) => (
-                      <tr key={b.id}>
-                        <td className="ad-td-main">{b.renterName}</td>
-                        <td className="text-sm">
-                          {(b.items || []).map((l) => `${l.itemName} ×${l.quantity}`).join(", ")}
-                        </td>
-                        <td className="text-xs whitespace-nowrap">
-                          {format(tsToDate(b.borrowedAt) || new Date(), "MMM d, yyyy HH:mm")}
-                        </td>
-                        <td className="text-xs whitespace-nowrap">
-                          {b.actualReturnAt
-                            ? format(tsToDate(b.actualReturnAt) || new Date(), "MMM d, yyyy HH:mm")
-                            : "—"}
-                        </td>
-                        <td className="text-right text-xs font-mono">
-                          {b.rentalCharge != null ? `₱${Number(b.rentalCharge).toFixed(2)}` : "—"}
-                        </td>
-                        <td className="text-right text-xs font-mono text-amber-400">
-                          {b.overdueCharge != null && Number(b.overdueCharge) > 0
-                            ? `₱${Number(b.overdueCharge).toFixed(2)}`
-                            : "—"}
-                        </td>
-                        <td className="text-right text-xs font-mono font-semibold">
-                          {b.totalCharge != null ? `₱${Number(b.totalCharge).toFixed(2)}` : "—"}
-                        </td>
-                        <td>
-                          <span
-                            className={`ad-badge ${
-                              b.status === "returned" ? "ad-badge-approved" : "ad-badge-pending"
-                            }`}
-                          >
-                            {b.status}
-                          </span>
-                        </td>
+          <div className="grid lg:grid-cols-2 gap-6">
+            <div>
+              <div className="ad-card overflow-hidden">
+                <div className="ad-card-header">
+                  <h3 className="ad-card-title flex items-center gap-2">
+                    <span className="material-symbols-outlined text-sky-400 text-lg">calendar_clock</span>
+                    Renting history ({reportFilteredBorrows.length})
+                  </h3>
+                </div>
+                <div className="overflow-x-auto max-h-80">
+                  <table className="ad-table">
+                    <thead>
+                      <tr>
+                        <th>Borrower</th>
+                        <th>Items</th>
+                        <th>Borrowed</th>
+                        <th>Returned</th>
+                        <th className="text-right">Total</th>
+                        <th>Status</th>
                       </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
+                    </thead>
+                    <tbody>
+                      {reportFilteredBorrows.length === 0 ? (
+                        <tr>
+                          <td colSpan={6} className="ad-empty">
+                            No rents in this period.
+                          </td>
+                        </tr>
+                      ) : (
+                        reportFilteredBorrows.slice((historyPage - 1) * PAGE_SIZE, historyPage * PAGE_SIZE).map((b) => (
+                          <tr key={b.id}>
+                            <td className="ad-td-main">{b.renterName}</td>
+                            <td className="text-sm">
+                              {(b.items || []).map((l) => `${l.itemName} ×${l.quantity}`).join(", ")}
+                            </td>
+                            <td className="text-xs whitespace-nowrap">
+                              {format(tsToDate(b.borrowedAt) || new Date(), "MMM d, HH:mm")}
+                            </td>
+                            <td className="text-xs whitespace-nowrap">
+                              {b.actualReturnAt
+                                ? format(tsToDate(b.actualReturnAt) || new Date(), "MMM d, HH:mm")
+                                : "—"}
+                            </td>
+                            <td className="text-right text-xs font-mono font-semibold">
+                              {b.totalCharge != null ? `₱${Number(b.totalCharge).toFixed(2)}` : "—"}
+                            </td>
+                            <td>
+                              <span
+                                className={`ad-badge ${
+                                  b.status === "returned" ? "ad-badge-approved" : "ad-badge-pending"
+                                }`}
+                              >
+                                {b.status}
+                              </span>
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+              <Pagination
+                page={historyPage}
+                totalPages={Math.max(1, Math.ceil(reportFilteredBorrows.length / PAGE_SIZE))}
+                onPage={setHistoryPage}
+              />
+            </div>
+
+            <div>
+              <div className="ad-card overflow-hidden">
+                <div className="ad-card-header">
+                  <h3 className="ad-card-title flex items-center gap-2">
+                    <span className="material-symbols-outlined text-amber-400 text-lg">storefront</span>
+                    Sales history ({reportFilteredSales.length})
+                  </h3>
+                </div>
+                <div className="overflow-x-auto max-h-80">
+                  <table className="ad-table">
+                    <thead>
+                      <tr>
+                        <th>Customer</th>
+                        <th>Item</th>
+                        <th>Qty</th>
+                        <th>Date</th>
+                        <th className="text-right">Total</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {reportFilteredSales.length === 0 ? (
+                        <tr>
+                          <td colSpan={5} className="ad-empty">No sales in this period.</td>
+                        </tr>
+                      ) : (
+                        reportFilteredSales.slice((salesHistoryPage - 1) * PAGE_SIZE, salesHistoryPage * PAGE_SIZE).map((s) => (
+                          <tr key={s.id}>
+                            <td className="ad-td-main">{s.buyerName}</td>
+                            <td className="text-sm">{s.itemName}</td>
+                            <td className="font-mono text-center">{s.quantity}</td>
+                            <td className="text-xs whitespace-nowrap">
+                              {format(tsToDate(s.createdAt) || (s.timestampMs ? new Date(s.timestampMs) : new Date()), "MMM d, HH:mm")}
+                            </td>
+                            <td className="text-right font-mono font-semibold text-emerald-400">
+                              ₱{Number(s.total || 0).toFixed(2)}
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+              <Pagination
+                page={salesHistoryPage}
+                totalPages={Math.max(1, Math.ceil(reportFilteredSales.length / PAGE_SIZE))}
+                onPage={setSalesHistoryPage}
+              />
             </div>
           </div>
-          <Pagination
-            page={historyPage}
-            totalPages={Math.max(1, Math.ceil(reportFilteredBorrows.length / PAGE_SIZE))}
-            onPage={setHistoryPage}
-          />
 
           <div className="grid md:grid-cols-2 gap-4">
             <div className="ad-card p-4">
@@ -1240,6 +1562,19 @@ export default function InventoryPage() {
                 />
               </div>
               <div className="af-group">
+                <label className="af-label">Item Type *</label>
+                <select
+                  className="af-input"
+                  value={itemForm.type}
+                  onChange={(e) => setItemForm((f) => ({ ...f, type: e.target.value }))}
+                  required
+                >
+                  <option value="rent">For Rent</option>
+                  <option value="sale">For Sale</option>
+                  <option value="both">Both</option>
+                </select>
+              </div>
+              <div className="af-group">
                 <label className="af-label">Total quantity *</label>
                 <input
                   className="af-input"
@@ -1250,36 +1585,57 @@ export default function InventoryPage() {
                   required
                 />
               </div>
-              <div className="af-row grid grid-cols-1 sm:grid-cols-2 gap-3">
+              
+              {(itemForm.type === 'rent' || itemForm.type === 'both') && (
+                <>
+                  <div className="af-row grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div className="af-group">
+                      <label className="af-label">Rental (₱ / hour)</label>
+                      <input
+                        className="af-input"
+                        type="number"
+                        min={0}
+                        step={0.01}
+                        value={itemForm.pricePerHour}
+                        onChange={(e) => setItemForm((f) => ({ ...f, pricePerHour: e.target.value }))}
+                        placeholder="0"
+                      />
+                    </div>
+                    <div className="af-group">
+                      <label className="af-label">Overdue fine (₱ / hour)</label>
+                      <input
+                        className="af-input"
+                        type="number"
+                        min={0}
+                        step={0.01}
+                        value={itemForm.overdueFinePerHour}
+                        onChange={(e) => setItemForm((f) => ({ ...f, overdueFinePerHour: e.target.value }))}
+                        placeholder="0"
+                      />
+                    </div>
+                  </div>
+                  <p className="text-[11px] text-[var(--ad-muted)] -mt-1">
+                    Per borrowed unit, per hour. Fines accrue for late returns based on time past the due time.
+                  </p>
+                </>
+              )}
+
+              {(itemForm.type === 'sale' || itemForm.type === 'both') && (
                 <div className="af-group">
-                  <label className="af-label">Rental (₱ / hour)</label>
+                  <label className="af-label">Sale Price (₱)</label>
                   <input
                     className="af-input"
                     type="number"
                     min={0}
                     step={0.01}
-                    value={itemForm.pricePerHour}
-                    onChange={(e) => setItemForm((f) => ({ ...f, pricePerHour: e.target.value }))}
+                    value={itemForm.salePrice}
+                    onChange={(e) => setItemForm((f) => ({ ...f, salePrice: e.target.value }))}
                     placeholder="0"
                   />
                 </div>
-                <div className="af-group">
-                  <label className="af-label">Overdue fine (₱ / hour)</label>
-                  <input
-                    className="af-input"
-                    type="number"
-                    min={0}
-                    step={0.01}
-                    value={itemForm.overdueFinePerHour}
-                    onChange={(e) => setItemForm((f) => ({ ...f, overdueFinePerHour: e.target.value }))}
-                    placeholder="0"
-                  />
-                </div>
-              </div>
-              <p className="text-[11px] text-[var(--ad-muted)] -mt-1">
-                Per borrowed unit, per hour. Fines accrue for late returns based on time past the due time.
-              </p>
-              <div className="af-group">
+              )}
+
+              <div className="af-group mt-3">
                 <label className="af-label">Notes</label>
                 <textarea
                   className="af-input af-textarea"
@@ -1355,6 +1711,99 @@ export default function InventoryPage() {
             </div>
           </div>
         </div>
+      )}
+
+      {returnModal && (
+        <div className="ad-modal-backdrop" onClick={(e) => e.target === e.currentTarget && setReturnModal(null)}>
+          <div className="ad-modal max-w-sm">
+            <div className="ad-modal-header border-b border-[var(--ad-border)] pb-3 mb-4">
+              <h3 className="flex items-center gap-2">
+                <span className="material-symbols-outlined text-amber-400">assignment_return</span>
+                Process Return
+              </h3>
+              <button type="button" className="ad-modal-close" onClick={() => setReturnModal(null)}>
+                ✕
+              </button>
+            </div>
+            <div className="ad-modal-form">
+              <p className="text-sm text-[var(--ad-text)] font-semibold mb-4">
+                Return for "{returnModal.data.borrowerName}"?
+              </p>
+              
+              <div className="space-y-2 text-sm bg-[var(--ad-surface)] border border-[var(--ad-border)] p-3 rounded-lg mb-4">
+                <div className="flex justify-between text-[var(--ad-muted)]">
+                  <span>Scheduled rental:</span>
+                  <span className="font-mono text-[var(--ad-text)]">₱{returnModal.rentalCharge.toFixed(2)}</span>
+                </div>
+                <div className="flex justify-between text-[var(--ad-muted)]">
+                  <span>Late hours:</span>
+                  <span className="font-mono text-[var(--ad-text)]">{returnModal.lateH.toFixed(2)}h</span>
+                </div>
+                <div className="flex justify-between text-[var(--ad-muted)]">
+                  <span>Overdue fine:</span>
+                  <span className="font-mono text-amber-400">₱{returnModal.overdueCharge.toFixed(2)}</span>
+                </div>
+                <div className="pt-2 mt-2 border-t border-[var(--ad-border)] flex justify-between font-bold text-lg">
+                  <span>Total due:</span>
+                  <span className="font-mono text-emerald-400">₱{returnModal.totalCharge.toFixed(2)}</span>
+                </div>
+              </div>
+
+              {returnModal.totalCharge > 0 && (
+                <div className="space-y-4 mb-4">
+                  <div className="af-group">
+                    <label className="af-label">Cash Received (₱) *</label>
+                    <input
+                      className="af-input"
+                      type="number"
+                      min={0}
+                      step={0.01}
+                      value={returnCashReceived}
+                      onChange={(e) => setReturnCashReceived(e.target.value)}
+                      required
+                      placeholder="0.00"
+                    />
+                  </div>
+                  {returnCashReceived && Number(returnCashReceived) >= returnModal.totalCharge && (
+                    <div className="flex justify-between items-center bg-[var(--ad-surface)] border border-[var(--ad-border)] p-3 rounded-lg">
+                      <div className="text-[10px] font-bold uppercase tracking-wider text-[var(--ad-muted)]">
+                        Change
+                      </div>
+                      <div className="text-lg font-bold text-emerald-400 font-mono">
+                        ₱{(Number(returnCashReceived) - returnModal.totalCharge).toFixed(2)}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+            <div className="ad-modal-footer">
+              <button type="button" className="ad-btn ad-btn-outline" onClick={() => setReturnModal(null)} disabled={syncState !== "idle" && syncState !== "error"}>
+                Cancel
+              </button>
+              <button type="button" className="ad-btn ad-btn-primary" onClick={processReturnConfirm} disabled={syncState !== "idle" && syncState !== "error"}>
+                {syncState === "syncing" ? "Processing..." : syncState === "offline-saved" ? "Saved Offline" : "Confirm Return"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {receiptData && (
+        <UniversalReceipt
+          receiptId={receiptData.receiptId}
+          date={receiptData.date}
+          customerName={receiptData.buyerName}
+          items={receiptData.items}
+          subtotal={receiptData.total}
+          discount={0}
+          total={receiptData.total}
+          paymentMethod="Cash"
+          onAfterPrint={() => {
+            setReceiptData(null);
+            setSellForm({ buyerName: "", itemId: "", quantity: 1, cashReceived: "" });
+          }}
+        />
       )}
     </div>
   );

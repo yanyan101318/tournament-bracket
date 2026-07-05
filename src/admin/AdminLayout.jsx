@@ -1,12 +1,13 @@
 // src/admin/AdminLayout.jsx
 import { useState, useEffect, useRef } from "react";
 import { NavLink, Outlet, useNavigate, useLocation } from "react-router-dom";
-import { collection, onSnapshot, waitForPendingWrites } from "firebase/firestore";
+import { collection, onSnapshot, waitForPendingWrites, query, where, doc, updateDoc } from "firebase/firestore";
 import { db } from "../firebase";
 import toast from "react-hot-toast";
 import { useAuth } from "../auth/AuthContext";
 import OfflinePreloader from "./OfflinePreloader";
 import RanawLogo from "../components/RanawLogo";
+import { sendBookingSMS } from "../lib/smsService";
 
 const NAV_LINKS = [
   { to: "/admin/dashboard", label: "Dashboard" },
@@ -65,6 +66,7 @@ export default function AdminLayout() {
   const [pendingBookingCount, setPendingBookingCount] = useState(0);
   const [unseenBookingCount, setUnseenBookingCount] = useState(0);
   const [notifOpen, setNotifOpen] = useState(false);
+  const [equipmentWarningCount, setEquipmentWarningCount] = useState(0);
 
   // --- OFFLINE SUPPORT STATE ---
   const [isOnline, setIsOnline] = useState(navigator.onLine);
@@ -207,6 +209,64 @@ export default function AdminLayout() {
       }
     );
     return () => unsub();
+  }, [loading, role]);
+
+  /** Active Equipment Tracking & SMS Alerts */
+  useEffect(() => {
+    if (loading || role !== "admin") {
+      setEquipmentWarningCount(0);
+      return;
+    }
+    const q = query(collection(db, "borrowRecords"), where("status", "in", ["active", "rented", "borrowed"]));
+    
+    let activeBorrows = [];
+    const unsub = onSnapshot(q, (snap) => {
+      activeBorrows = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      checkEquipmentAlerts();
+    });
+
+    const checkEquipmentAlerts = async () => {
+      const nowMs = Date.now();
+      let warnings = 0;
+
+      for (const b of activeBorrows) {
+        if (!b.expectedReturnAt) continue;
+        const expMs = typeof b.expectedReturnAt.toMillis === "function" 
+          ? b.expectedReturnAt.toMillis() 
+          : new Date(b.expectedReturnAt).getTime();
+        
+        const isOverdue = expMs < nowMs;
+        const minsLeft = (expMs - nowMs) / 60000;
+        const isNearDue = !isOverdue && minsLeft <= 30;
+
+        if (isOverdue || isNearDue) {
+          warnings++;
+        }
+
+        const contact = b.contactNumber?.trim();
+        if (contact) {
+          if (isNearDue && !b.warningSmsSent) {
+            const msg = `Assalamu alaikum! RANAW PICKLEBALL COURT: Your equipment rental is due in 30 minutes. Please return it on time to avoid overdue charges. Shukran!`;
+            b.warningSmsSent = true; 
+            sendBookingSMS(b.id, contact, msg);
+            updateDoc(doc(db, "borrowRecords", b.id), { warningSmsSent: true }).catch(console.error);
+          } else if (isOverdue && !b.overdueSmsSent) {
+            const msg = `Assalamu alaikum! RANAW PICKLEBALL COURT: Your equipment rental is now OVERDUE. Please return it immediately. Overdue fines will apply. Shukran!`;
+            b.overdueSmsSent = true;
+            sendBookingSMS(b.id, contact, msg);
+            updateDoc(doc(db, "borrowRecords", b.id), { overdueSmsSent: true }).catch(console.error);
+          }
+        }
+      }
+      setEquipmentWarningCount(warnings);
+    };
+
+    const intervalId = setInterval(checkEquipmentAlerts, 60000);
+
+    return () => {
+      unsub();
+      clearInterval(intervalId);
+    };
   }, [loading, role]);
 
   async function handleLogout() {
@@ -430,6 +490,9 @@ export default function AdminLayout() {
                   }
                 >
                   {item.label}
+                  {item.to === "/admin/equipment" && equipmentWarningCount > 0 && (
+                    <span className="ml-1 inline-flex items-center justify-center w-2 h-2 bg-amber-500 rounded-full animate-pulse shadow-[0_0_8px_rgba(245,158,11,0.6)]" />
+                  )}
                 </NavLink>
               ))}
             </div>
@@ -669,7 +732,12 @@ export default function AdminLayout() {
                         }`
                       }
                     >
-                      {item.label}
+                      <div className="flex items-center gap-2">
+                        {item.label}
+                        {item.to === "/admin/equipment" && equipmentWarningCount > 0 && (
+                          <span className="inline-flex items-center justify-center w-2 h-2 bg-amber-500 rounded-full animate-pulse shadow-[0_0_8px_rgba(245,158,11,0.6)]" />
+                        )}
+                      </div>
                     </NavLink>
                   </li>
                 ))}

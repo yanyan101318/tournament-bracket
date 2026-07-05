@@ -535,7 +535,7 @@ export default function CourtManager() {
             </div>
             <div id="print-section" className="p-8 bg-white rounded-xl my-4 flex flex-col items-center">
               <div className="print-text print-title hidden">{qrCourt.name}</div>
-              <QRCodeCanvas id="court-qr-canvas" value={`${window.location.origin}/foodcourt?courtId=${qrCourt.id}`} size={256} />
+              <QRCodeCanvas id="court-qr-canvas" value={`${window.location.origin}/court-order/${qrCourt.id}`} size={256} />
               <div className="print-text print-subtitle hidden">Scan to Order</div>
             </div>
             <p className="text-sm text-slate-400 text-center px-4 mb-4">

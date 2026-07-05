@@ -79,7 +79,7 @@ export function getNextServer(match) {
   if (!match.currentGame) {
     return {
       servingTeam: "A",
-      firstServer: true,
+      firstServer: false,
       servingSide: "right",
       pointsServed: 0,
     };
@@ -222,7 +222,7 @@ function generateSingleElimination(teams, format) {
       fromMatchB: null,
       currentGame: {
         servingTeam: "A",
-        firstServer: true,
+        firstServer: false,
         servingSide: "right",
         pointsServed: 0,
       },
@@ -251,7 +251,7 @@ function generateSingleElimination(teams, format) {
         fromMatchB: currentRound[i + 1]?.matchId ?? null,
         currentGame: {
           servingTeam: "A",
-          firstServer: true,
+          firstServer: false,
           servingSide: "right",
           pointsServed: 0,
         },
@@ -328,7 +328,7 @@ function generateRoundRobin(teams, format) {
           nextMatchId: null,
           currentGame: {
             servingTeam: "A",
-            firstServer: true,
+            firstServer: false,
             servingSide: "right",
             pointsServed: 0,
           },
@@ -396,7 +396,7 @@ function generateDoubleElimination(teams, format) {
       fromLoserA: null,
       currentGame: {
         servingTeam: "A",
-        firstServer: true,
+        firstServer: false,
         servingSide: "right",
         pointsServed: 0,
       },
@@ -430,7 +430,7 @@ function generateDoubleElimination(teams, format) {
         fromWinnerB: currentRound[i + 1]?.matchId ?? null,
         currentGame: {
           servingTeam: "A",
-          firstServer: true,
+          firstServer: false,
           servingSide: "right",
           pointsServed: 0,
         },
@@ -472,7 +472,7 @@ function generateDoubleElimination(teams, format) {
       fromLosers: [],
       currentGame: {
         servingTeam: "A",
-        firstServer: true,
+        firstServer: false,
         servingSide: "right",
         pointsServed: 0,
       },
@@ -573,7 +573,7 @@ export function recordSetWin(match, winner, matchMap, scoreA = 0, scoreB = 0, sc
   // Reset serving for next game
   match.currentGame = {
     servingTeam: "A",
-    firstServer: true,
+    firstServer: false,
     servingSide: "right",
     pointsServed: 0,
   };
@@ -625,7 +625,7 @@ export function undoLastSet(match, matchMap) {
   // Reset serving for current game
   match.currentGame = {
     servingTeam: "A",
-    firstServer: true,
+    firstServer: false,
     servingSide: "right",
     pointsServed: 0,
   };

@@ -1,9 +1,9 @@
 // src/admin/Analytics.jsx
 import { useState, useEffect, useMemo } from "react";
 import { collection, getDocs, query, where } from "firebase/firestore";
-import { format } from "date-fns";
+import { format, isSameDay, isSameWeek, isSameMonth, isSameYear, startOfDay, endOfDay, parseISO, isWithinInterval } from "date-fns";
 import { db } from "../firebase";
-import { Download, Loader2, CheckCircle, AlertCircle } from "lucide-react";
+import { Download, Loader2, CheckCircle, AlertCircle, Filter } from "lucide-react";
 import { generateAnalyticsExcel } from "../utils/export/AnalyticsExcelGenerator";
 
 const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -57,99 +57,41 @@ function StatusIcon({ status }) {
 }
 
 export default function Analytics() {
-  const [data, setData] = useState(null);
+  const [rawData, setRawData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [fetchedAt, setFetchedAt] = useState(null);
   const [exportStatus, setExportStatus] = useState("idle");
 
-  const handleExport = async () => {
-    try {
-      setExportStatus("loading");
-      await generateAnalyticsExcel(data);
-      setExportStatus("success");
-      setTimeout(() => setExportStatus("idle"), 3000);
-    } catch (err) {
-      console.error(err);
-      setExportStatus("error");
-      setTimeout(() => setExportStatus("idle"), 5000);
-    }
-  };
+  const [filterType, setFilterType] = useState("all");
+  const [customStart, setCustomStart] = useState("");
+  const [customEnd, setCustomEnd] = useState("");
 
   useEffect(() => {
     async function fetchData() {
       try {
-        const [bookSnap, paySnap, userSnap, courtSnap] = await Promise.all([
+        const [bookSnap, paySnap, userSnap, courtSnap, borrowSnap, salesSnap] = await Promise.all([
           getDocs(collection(db, "bookings")),
           getDocs(collection(db, "payments")),
-          getDocs(query(collection(db, "users"), where("role", "==", "customer"))),
+          getDocs(collection(db, "user")),
           getDocs(collection(db, "courts")),
+          getDocs(collection(db, "borrowRecords")),
+          getDocs(collection(db, "salesRecords")),
         ]);
 
         const bookings = bookSnap.docs.map((d) => d.data());
         const payments = paySnap.docs.map((d) => d.data());
         const courts = courtSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+        const borrows = borrowSnap.docs.map((d) => d.data());
+        const sales = salesSnap.docs.map((d) => d.data());
 
-        const bPerCourt = {};
-        courts.forEach((c) => {
-          bPerCourt[c.name ?? c.id] = 0;
-        });
-        bookings.forEach((b) => {
-          const k = b.courtName ?? b.courtId;
-          if (k) bPerCourt[k] = (bPerCourt[k] ?? 0) + 1;
-        });
-
-        const bPerStatus = { Pending: 0, Approved: 0, Cancelled: 0 };
-        bookings.forEach((b) => {
-          if (b.status) bPerStatus[b.status] = (bPerStatus[b.status] ?? 0) + 1;
-        });
-
-        const revenue = payments
-          .filter((p) => p.paymentStatus === "Approved")
-          .reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
-
-        const methods = {};
-        payments.forEach((p) => {
-          if (p.method) methods[p.method] = (methods[p.method] ?? 0) + 1;
-        });
-
-        const bPerDay = { Sun: 0, Mon: 0, Tue: 0, Wed: 0, Thu: 0, Fri: 0, Sat: 0 };
-        bookings.forEach((b) => {
-          if (b.date) {
-            const d = new Date(b.date);
-            if (!Number.isNaN(d.getTime())) {
-              const day = DAYS[d.getDay()];
-              bPerDay[day] = (bPerDay[day] || 0) + 1;
-            }
-          }
-        });
-
-        const monthlyRevenue = {};
-        const bookingPaySplit = { GCash: 0, Cash: 0, Other: 0 };
-        bookings.forEach((b) => {
-          const ts = b.createdAt?.toDate?.();
-          if (ts) {
-            const km = format(ts, "yyyy-MM");
-            monthlyRevenue[km] =
-              (monthlyRevenue[km] || 0) + (Number(b.totalAmount) || Number(b.amountPaid) || 0);
-          }
-          const pm = String(b.paymentMethod || "").toLowerCase();
-          if (pm === "gcash") bookingPaySplit.GCash += 1;
-          else if (pm === "cash") bookingPaySplit.Cash += 1;
-          else if (pm) bookingPaySplit.Other += 1;
-        });
-
-        setData({
+        setRawData({
           bookings,
           payments,
+          borrows,
+          sales,
           userCount: userSnap.size,
           courtCount: courtSnap.size,
-          bPerCourt,
-          bPerStatus,
-          revenue,
-          methods,
-          bPerDay,
-          monthlyRevenue,
-          bookingPaySplit,
+          courts,
         });
         setFetchedAt(new Date());
       } catch (err) {
@@ -160,6 +102,163 @@ export default function Analytics() {
     fetchData();
   }, []);
 
+  const data = useMemo(() => {
+    if (!rawData) return null;
+    const now = new Date();
+
+    const isMatch = (dateStrOrObj) => {
+      if (filterType === "all") return true;
+      if (!dateStrOrObj) return false;
+
+      let dateObj;
+      if (typeof dateStrOrObj?.toDate === 'function') {
+        dateObj = dateStrOrObj.toDate();
+      } else {
+        dateObj = new Date(dateStrOrObj);
+      }
+
+      if (Number.isNaN(dateObj.getTime())) return false;
+
+
+
+      if (filterType === "daily") return isSameDay(dateObj, now);
+      if (filterType === "weekly") return isSameWeek(dateObj, now);
+      if (filterType === "monthly") return isSameMonth(dateObj, now);
+      if (filterType === "annually") return isSameYear(dateObj, now);
+      if (filterType === "custom") {
+        if (!customStart || !customEnd) return true;
+        const start = startOfDay(parseISO(customStart));
+        const end = endOfDay(parseISO(customEnd));
+        return isWithinInterval(dateObj, { start, end });
+      }
+      return true;
+    };
+
+    const bookings = rawData.bookings.filter(b => {
+      const d = b.createdAt?.toDate?.() || (b.date ? new Date(b.date) : null);
+      return isMatch(d);
+    });
+
+    const payments = rawData.payments.filter(p => {
+      const d = p.createdAt?.toDate?.() || (p.date ? new Date(p.date) : null);
+      return isMatch(d);
+    });
+
+    const borrows = (rawData.borrows || []).filter(b => {
+      const d = b.borrowedAt?.toDate?.() || b.createdAt?.toDate?.();
+      return isMatch(d);
+    });
+
+    const sales = (rawData.sales || []).filter(s => {
+      const d = s.createdAt?.toDate?.() || (s.timestampMs ? new Date(s.timestampMs) : null);
+      return isMatch(d);
+    });
+
+    const bPerCourt = {};
+    rawData.courts.forEach((c) => {
+      bPerCourt[c.name ?? c.id] = 0;
+    });
+    bookings.forEach((b) => {
+      const k = b.courtName ?? b.courtId;
+      if (k) bPerCourt[k] = (bPerCourt[k] ?? 0) + 1;
+    });
+
+    const bPerStatus = { Pending: 0, Approved: 0, Cancelled: 0 };
+    bookings.forEach((b) => {
+      if (b.status) bPerStatus[b.status] = (bPerStatus[b.status] ?? 0) + 1;
+    });
+
+    const revenue = payments
+      .filter((p) => p.paymentStatus === "Approved")
+      .reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+
+    const methods = {};
+    payments.forEach((p) => {
+      if (p.method) methods[p.method] = (methods[p.method] ?? 0) + 1;
+    });
+
+    const bPerDay = { Sun: 0, Mon: 0, Tue: 0, Wed: 0, Thu: 0, Fri: 0, Sat: 0 };
+    bookings.forEach((b) => {
+      if (b.date) {
+        const d = new Date(b.date);
+        if (!Number.isNaN(d.getTime())) {
+          const day = DAYS[d.getDay()];
+          bPerDay[day] = (bPerDay[day] || 0) + 1;
+        }
+      }
+    });
+
+    const monthlyRevenue = {};
+    const bookingPaySplit = { GCash: 0, Cash: 0, Other: 0 };
+    bookings.forEach((b) => {
+      const ts = b.createdAt?.toDate?.() || (b.date ? new Date(b.date) : null);
+      if (ts && !Number.isNaN(ts.getTime())) {
+        const km = format(ts, "yyyy-MM");
+        monthlyRevenue[km] =
+          (monthlyRevenue[km] || 0) + (Number(b.totalAmount) || Number(b.amountPaid) || 0);
+      }
+      const pm = String(b.paymentMethod || "").toLowerCase();
+      if (pm === "gcash") bookingPaySplit.GCash += 1;
+      else if (pm === "cash") bookingPaySplit.Cash += 1;
+      else if (pm) bookingPaySplit.Other += 1;
+    });
+
+    let equipmentRevenue = 0;
+    const mostBorrowedEquipment = {};
+
+    sales.forEach(s => {
+      equipmentRevenue += Number(s.total) || 0;
+    });
+
+    borrows.forEach(b => {
+      if (b.status === "returned") {
+        equipmentRevenue += Number(b.totalCharge) || 0;
+      } else {
+        equipmentRevenue += Number(b.estimatedRentalCharge) || 0;
+      }
+
+      const items = b.items || [];
+      items.forEach(it => {
+        const name = it.itemName || "Unknown Item";
+        const qty = Number(it.quantity) || 1;
+        mostBorrowedEquipment[name] = (mostBorrowedEquipment[name] || 0) + qty;
+      });
+    });
+
+    return {
+      bookings,
+      payments,
+      userCount: rawData.userCount,
+      courtCount: rawData.courtCount,
+      bPerCourt,
+      bPerStatus,
+      revenue,
+      methods,
+      bPerDay,
+      monthlyRevenue,
+      bookingPaySplit,
+      equipmentRevenue,
+      mostBorrowedEquipment,
+    };
+  }, [rawData, filterType, customStart, customEnd]);
+
+  const handleExport = async () => {
+    try {
+      setExportStatus("loading");
+      let dateLabel = filterType === "all" ? "All Time" : filterType.charAt(0).toUpperCase() + filterType.slice(1);
+      if (filterType === "custom") {
+        dateLabel = `${customStart} to ${customEnd}`;
+      }
+      await generateAnalyticsExcel(data, "Analytics_Dashboard_Report", dateLabel);
+      setExportStatus("success");
+      setTimeout(() => setExportStatus("idle"), 3000);
+    } catch (err) {
+      console.error(err);
+      setExportStatus("error");
+      setTimeout(() => setExportStatus("idle"), 5000);
+    }
+  };
+
   const maxBPerCourt = useMemo(
     () => Math.max(...Object.values(data?.bPerCourt ?? {}), 1),
     [data]
@@ -169,6 +268,15 @@ export default function Analytics() {
   const courtEntries = useMemo(
     () => Object.entries(data?.bPerCourt ?? {}).sort((a, b) => b[1] - a[1]),
     [data]
+  );
+
+  const equipmentEntries = useMemo(
+    () => Object.entries(data?.mostBorrowedEquipment ?? {}).sort((a, b) => b[1] - a[1]),
+    [data]
+  );
+  const maxEquipment = useMemo(
+    () => Math.max(...equipmentEntries.map(([, v]) => v), 1),
+    [equipmentEntries]
   );
 
   const methodEntries = useMemo(() => {
@@ -245,17 +353,54 @@ export default function Analytics() {
               )}
             </div>
           </div>
-          
-          <button
-            onClick={handleExport}
-            disabled={exportStatus === "loading"}
-            className="inline-flex items-center justify-center px-4 py-2 text-sm font-medium rounded-md transition-all duration-200 bg-slate-800 text-slate-200 hover:bg-slate-700 hover:text-white border border-slate-600/50 hover:border-slate-500 hover:shadow-lg focus:outline-none disabled:opacity-50 shrink-0"
-          >
-            {exportStatus === "loading" && <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Exporting...</>}
-            {exportStatus === "success" && <><CheckCircle className="w-4 h-4 mr-2 text-green-400" /> Exported!</>}
-            {exportStatus === "error" && <><AlertCircle className="w-4 h-4 mr-2 text-red-400" /> Error</>}
-            {exportStatus === "idle" && <><Download className="w-4 h-4 mr-2" /> Export Dashboard</>}
-          </button>
+          <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
+            <div className="flex flex-wrap items-center gap-2 bg-slate-800 p-1 rounded-lg border border-slate-700">
+              <span className="text-slate-400 text-xs px-2 font-medium flex items-center gap-1">
+                <Filter size={14} /> Filter:
+              </span>
+              <select
+                className="bg-slate-900 border border-slate-700 text-slate-200 text-sm rounded-md px-2 py-1.5 focus:outline-none focus:border-green-500 transition-colors"
+                value={filterType}
+                onChange={(e) => setFilterType(e.target.value)}
+              >
+                <option value="all">All Time</option>
+                <option value="daily">Today</option>
+                <option value="weekly">This Week</option>
+                <option value="monthly">This Month</option>
+                <option value="annually">This Year</option>
+                <option value="custom">Custom Date</option>
+              </select>
+
+              {filterType === "custom" && (
+                <div className="flex items-center gap-2 px-1">
+                  <input
+                    type="date"
+                    className="bg-slate-900 border border-slate-700 text-slate-200 text-sm rounded-md px-2 py-1 focus:outline-none focus:border-green-500"
+                    value={customStart}
+                    onChange={(e) => setCustomStart(e.target.value)}
+                  />
+                  <span className="text-slate-500 text-xs">to</span>
+                  <input
+                    type="date"
+                    className="bg-slate-900 border border-slate-700 text-slate-200 text-sm rounded-md px-2 py-1 focus:outline-none focus:border-green-500"
+                    value={customEnd}
+                    onChange={(e) => setCustomEnd(e.target.value)}
+                  />
+                </div>
+              )}
+            </div>
+
+            <button
+              onClick={handleExport}
+              disabled={exportStatus === "loading"}
+              className="inline-flex items-center justify-center px-4 py-2.5 text-sm font-medium rounded-md transition-all duration-200 bg-green-600 text-white hover:bg-green-500 border border-green-500/50 hover:shadow-lg focus:outline-none disabled:opacity-50 shrink-0"
+            >
+              {exportStatus === "loading" && <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Exporting...</>}
+              {exportStatus === "success" && <><CheckCircle className="w-4 h-4 mr-2 text-white" /> Exported!</>}
+              {exportStatus === "error" && <><AlertCircle className="w-4 h-4 mr-2 text-white" /> Error</>}
+              {exportStatus === "idle" && <><Download className="w-4 h-4 mr-2" /> Export Report</>}
+            </button>
+          </div>
         </div>
       </section>
 
@@ -276,8 +421,18 @@ export default function Analytics() {
           </div>
           <div className="an-stat-tile-body">
             <div className="an-stat-tile-value">₱{data.revenue.toLocaleString()}</div>
-            <div className="an-stat-tile-label">Total revenue</div>
+            <div className="an-stat-tile-label">Court revenue</div>
             <div className="an-stat-tile-sub">From approved payments</div>
+          </div>
+        </div>
+        <div className="an-stat-tile an-stat-tile--emerald" style={{ '--tw-bg-opacity': 0.1, backgroundColor: 'rgba(16, 185, 129, 0.1)' }}>
+          <div className="an-stat-tile-icon" style={{ color: '#10b981' }}>
+            <span className="material-symbols-outlined">sports_tennis</span>
+          </div>
+          <div className="an-stat-tile-body">
+            <div className="an-stat-tile-value">₱{data.equipmentRevenue.toLocaleString()}</div>
+            <div className="an-stat-tile-label">Equipment revenue</div>
+            <div className="an-stat-tile-sub">From rentals and sales</div>
           </div>
         </div>
         <div className="an-stat-tile an-stat-tile--purple">
@@ -286,7 +441,7 @@ export default function Analytics() {
           </div>
           <div className="an-stat-tile-body">
             <div className="an-stat-tile-value">{data.userCount}</div>
-            <div className="an-stat-tile-label">Registered players</div>
+            <div className="an-stat-tile-label">Registered Users</div>
             <div className="an-stat-tile-sub">Customer accounts</div>
           </div>
         </div>
@@ -324,6 +479,32 @@ export default function Analytics() {
                 value={v}
                 max={maxBPerCourt}
                 styleFill={BAR_ACCENT[i % BAR_ACCENT.length]}
+              />
+            ))}
+          </div>
+        </div>
+
+        <div className="ad-card">
+          <div className="an-card-head">
+            <div className="an-card-head-text">
+              <h3 className="an-card-title">
+                <span className="material-symbols-outlined" aria-hidden>
+                  inventory_2
+                </span>
+                Most borrowed equipment
+              </h3>
+              <p className="an-card-desc">Top rental items by quantity borrowed.</p>
+            </div>
+          </div>
+          <div className="an-bars">
+            {equipmentEntries.length === 0 && <div className="an-empty-soft">No equipment borrowed yet.</div>}
+            {equipmentEntries.slice(0, 10).map(([k, v], i) => (
+              <MiniBar
+                key={k}
+                label={k}
+                value={v}
+                max={maxEquipment}
+                styleFill={BAR_ACCENT[(i + 1) % BAR_ACCENT.length]}
               />
             ))}
           </div>

@@ -1065,6 +1065,9 @@ export default function BookingManager() {
                     </div>
                   </div>
                 )}
+
+                {/* Court Orders & Checkout Section */}
+                
               </div>
 
               <div className="mt-auto p-4 border-t border-slate-800 bg-[#0f172a]/95 sticky bottom-0 z-10 flex flex-wrap gap-2 items-center justify-between">
