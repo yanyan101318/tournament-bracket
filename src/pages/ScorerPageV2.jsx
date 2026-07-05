@@ -23,9 +23,6 @@ export default function ScorerPageV2() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   
-  const undoStackRef = useRef([]);
-  const [rallyUndoDepth, setRallyUndoDepth] = useState(0);
-  
   const [enteredPin, setEnteredPin] = useState("");
   const [pinError, setPinError] = useState("");
   const [hasPinAccess, setHasPinAccess] = useState(() => localStorage.getItem(`scorer_access_v2_${matchId}`));
@@ -158,34 +155,10 @@ export default function ScorerPageV2() {
     );
   }
 
-  async function handleUndo() {
-    if (isCompleted || saving || rallyUndoDepth === 0) return;
-    const snap = undoStackRef.current.pop();
-    if (!snap) return;
-    setRallyUndoDepth(d => Math.max(0, d - 1));
-    setSaving(true);
-    try {
-      await updateMatchScore(tournamentId, matchId, {
-        score1: snap.score1,
-        score2: snap.score2,
-        servingTeam: snap.servingTeam,
-        firstServer: snap.firstServer
-      });
-      toast.success("Undone");
-    } catch(e) {
-      undoStackRef.current.push(snap);
-      setRallyUndoDepth(d => d + 1);
-      toast.error("Failed to undo");
-    }
-    setSaving(false);
-  }
+
 
   async function adjustScore(team, delta) {
     if (isCompleted || saving) return;
-    if (delta === -1) {
-      handleUndo();
-      return;
-    }
 
     setSaving(true);
     const currentState = {
@@ -195,34 +168,34 @@ export default function ScorerPageV2() {
       firstServer: match.firstServer !== undefined ? match.firstServer : false,
     };
     
-    undoStackRef.current.push(currentState);
-    setRallyUndoDepth(d => d + 1);
-
     let { score1, score2, servingTeam, firstServer } = currentState;
 
-    if (team === servingTeam) {
-      if (team === 1) score1++;
-      if (team === 2) score2++;
-    } else {
-      if (firstServer) {
-        firstServer = false;
+    if (delta === 1) {
+      if (team === servingTeam) {
+        if (team === 1) score1++;
+        if (team === 2) score2++;
       } else {
-        servingTeam = servingTeam === 1 ? 2 : 1;
-        firstServer = true;
+        if (firstServer) {
+          firstServer = false;
+        } else {
+          servingTeam = servingTeam === 1 ? 2 : 1;
+          firstServer = true;
+        }
       }
+    } else if (delta === -1) {
+      if (team === 1 && score1 > 0) score1--;
+      if (team === 2 && score2 > 0) score2--;
     }
 
     try {
       await updateMatchScore(tournamentId, matchId, {
         score1, score2, servingTeam, firstServer
       });
-      if (team !== currentState.servingTeam) {
+      if (delta === 1 && team !== currentState.servingTeam) {
         toast("Serve fault — now " + (servingTeam === 1 ? match.team1Name : match.team2Name));
       }
     } catch (e) {
       toast.error("Failed to update score");
-      undoStackRef.current.pop();
-      setRallyUndoDepth(d => Math.max(0, d - 1));
     }
     setSaving(false);
   }
@@ -385,8 +358,8 @@ export default function ScorerPageV2() {
               <button 
                 className="sp-score-btn sp-btn-minus" 
                 onClick={() => adjustScore(1, -1)}
-                disabled={saving || isCompleted || match.team1Id === 'bye' || rallyUndoDepth === 0}
-                style={{width: "100%", fontSize: "0.9rem", opacity: rallyUndoDepth === 0 ? 0.4 : 1}}
+                disabled={saving || isCompleted || match.team1Id === 'bye' || (match.score1 || 0) === 0}
+                style={{width: "100%", fontSize: "0.9rem", opacity: (match.score1 || 0) === 0 ? 0.4 : 1}}
               >
                 <span>UNDO</span>
               </button>
@@ -426,8 +399,8 @@ export default function ScorerPageV2() {
               <button 
                 className="sp-score-btn sp-btn-minus" 
                 onClick={() => adjustScore(2, -1)}
-                disabled={saving || isCompleted || match.team2Id === 'bye' || rallyUndoDepth === 0}
-                style={{width: "100%", fontSize: "0.9rem", opacity: rallyUndoDepth === 0 ? 0.4 : 1}}
+                disabled={saving || isCompleted || match.team2Id === 'bye' || (match.score2 || 0) === 0}
+                style={{width: "100%", fontSize: "0.9rem", opacity: (match.score2 || 0) === 0 ? 0.4 : 1}}
               >
                 <span>UNDO</span>
               </button>

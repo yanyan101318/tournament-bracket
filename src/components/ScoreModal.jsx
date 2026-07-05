@@ -57,8 +57,7 @@ export default function ScoreModal({
   const [flashB, setFlashB] = useState(null);
   const [autoGameEnded, setAutoGameEnded] = useState(false);
   const [saving, setSaving] = useState(false);
-  const undoStackRef = useRef([]);
-  const [rallyUndoDepth, setRallyUndoDepth] = useState(0);
+  const [saving, setSaving] = useState(false);
   const [scoringMode, setScoringMode] = useState(() =>
     getStoredScoringMode(matchId, tournamentScoringMode),
   );
@@ -119,7 +118,6 @@ export default function ScoreModal({
         setLocalA(0);
         setLocalB(0);
         setAutoGameEnded(false);
-        undoStackRef.current = [];
       }, 500);
     }
   }, [localA, localB, autoGameEnded, match, onSetWin, matchId, scoringMode]);
@@ -133,12 +131,6 @@ export default function ScoreModal({
     if (!onPersistMatch || saving || winner || !teamA || !teamB) return;
 
     setSaving(true);
-    undoStackRef.current.push({
-      localA,
-      localB,
-      currentGame: cloneCurrentGame(match.currentGame),
-    });
-    setRallyUndoDepth((d) => d + 1);
 
     try {
       const m = {
@@ -183,48 +175,58 @@ export default function ScoreModal({
       triggerFlash(scoringTeam, "plus");
     } catch (err) {
       console.error(err);
-      undoStackRef.current.pop();
-      setRallyUndoDepth((d) => Math.max(0, d - 1));
     } finally {
       setSaving(false);
     }
   }
 
-  async function undoLastScoringAction() {
-    if (!onPersistMatch || saving) return;
-    const snap = undoStackRef.current.pop();
-    if (!snap) return;
-    setRallyUndoDepth((d) => Math.max(0, d - 1));
+  async function handleUndoPointA() {
+    if (!onPersistMatch || saving || localA === 0) return;
     setSaving(true);
     try {
-      setLocalA(snap.localA);
-      setLocalB(snap.localB);
+      const newScoreA = localA - 1;
+      setLocalA(newScoreA);
+      triggerFlash("A", "minus");
+      
       const m = {
         ...match,
         sets: [...(match.sets || [])],
-        currentGame: snap.currentGame ? { ...snap.currentGame } : null,
+        currentGame: match.currentGame
+          ? { ...match.currentGame }
+          : null, // Simple point minus, maybe don't touch server logic
       };
       await onPersistMatch(m);
     } catch (err) {
       console.error(err);
-      undoStackRef.current.push(snap);
-      setRallyUndoDepth((d) => d + 1);
     } finally {
       setSaving(false);
     }
   }
 
-  function handleUndoPointA() {
-    void undoLastScoringAction();
-  }
-
-  function handleUndoPointB() {
-    void undoLastScoringAction();
+  async function handleUndoPointB() {
+    if (!onPersistMatch || saving || localB === 0) return;
+    setSaving(true);
+    try {
+      const newScoreB = localB - 1;
+      setLocalB(newScoreB);
+      triggerFlash("B", "minus");
+      
+      const m = {
+        ...match,
+        sets: [...(match.sets || [])],
+        currentGame: match.currentGame
+          ? { ...match.currentGame }
+          : null,
+      };
+      await onPersistMatch(m);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setSaving(false);
+    }
   }
 
   function handleUndo() {
-    undoStackRef.current = [];
-    setRallyUndoDepth(0);
     onUndo(match);
     clearScore(matchId);
     setLocalA(0); setLocalB(0);
@@ -438,7 +440,7 @@ export default function ScoreModal({
                   <div className="panel-big-score">{localA}</div>
                 </div>
 
-                {/* Button Group - POINT and UNDO */}
+                {/* Button Group - POINT and MINUS */}
                 <div className="score-btn-group" style={{width: "100%", marginTop: "12px", gap: "8px", flexDirection: "column"}}>
                   <button 
                     className="score-action-btn btn-plus" 
@@ -451,8 +453,8 @@ export default function ScoreModal({
                   <button 
                     className="score-action-btn btn-minus" 
                     onClick={() => handleUndoPointA()}
-                    disabled={saving || rallyUndoDepth === 0}
-                    style={{width: "100%", fontSize: "0.9rem", opacity: rallyUndoDepth === 0 ? 0.4 : 1, cursor: rallyUndoDepth === 0 ? "not-allowed" : "pointer"}}
+                    disabled={saving || localA === 0}
+                    style={{width: "100%", fontSize: "0.9rem", opacity: localA === 0 ? 0.4 : 1, cursor: localA === 0 ? "not-allowed" : "pointer"}}
                   >
                     <span>UNDO</span>
                   </button>
@@ -505,7 +507,7 @@ export default function ScoreModal({
                   <div className="panel-big-score">{localB}</div>
                 </div>
 
-                {/* Button Group - POINT and UNDO */}
+                {/* Button Group - POINT and MINUS */}
                 <div className="score-btn-group" style={{width: "100%", marginTop: "12px", gap: "8px", flexDirection: "column"}}>
                   <button 
                     className="score-action-btn btn-plus" 
@@ -518,8 +520,8 @@ export default function ScoreModal({
                   <button 
                     className="score-action-btn btn-minus" 
                     onClick={() => handleUndoPointB()}
-                    disabled={saving || rallyUndoDepth === 0}
-                    style={{width: "100%", fontSize: "0.9rem", opacity: rallyUndoDepth === 0 ? 0.4 : 1, cursor: rallyUndoDepth === 0 ? "not-allowed" : "pointer"}}
+                    disabled={saving || localB === 0}
+                    style={{width: "100%", fontSize: "0.9rem", opacity: localB === 0 ? 0.4 : 1, cursor: localB === 0 ? "not-allowed" : "pointer"}}
                   >
                     <span>UNDO</span>
                   </button>
