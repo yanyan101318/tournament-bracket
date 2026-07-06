@@ -23,8 +23,6 @@ import Book from "./components/Book";
 import InventoryPage from "./admin/InventoryPage";
 import PaddleStackingPage from "./admin/PaddleStackingPage";
 import OpenPlayPage from "./admin/OpenPlayPage";
-import PosPage from "./admin/PosPage";
-import SalesHistoryPage from "./admin/SalesHistoryPage";
 import VendorStoresPage from "./admin/vendors/VendorStoresPage";
 import VendorPortal from "./vendor/VendorPortal";
 
@@ -34,14 +32,11 @@ import ScorerPageV2 from "./pages/ScorerPageV2";
 import LedWallV2 from "./pages/LedWallV2";
 import ViewerPage from "./pages/ViewerPage";
 import PublicTournamentView from "./pages/PublicTournamentView";
-import OrderPage from "./pages/OrderPage";
-import FoodCourtPage from "./pages/FoodCourtPage";
 import CustomerAccountPage from "./pages/CustomerAccountPage";
 import KioskPage from "./pages/KioskPage";
 import PaddleViewerPage from "./pages/PaddleViewerPage";
 import PaddleScorerPage from "./pages/PaddleScorerPage";
 import ExportExamples from "./pages/ExportExamples";
-import CourtFoodOrderingPage from "./pages/CourtFoodOrderingPage";
 
 import "./App.css";
 import "./admin/admin.css";
@@ -75,14 +70,11 @@ export default function App() {
             <Route path="/tournament-v2/:id/led-wall" element={<LedWallV2 />} />
             <Route path="/score/:tournamentId/:matchId" element={<ScorerPage />} />
             <Route path="/score-v2/:tournamentId/:matchId" element={<ScorerPageV2 />} />
-            <Route path="/foodcourt" element={<FoodCourtPage />} />
-            <Route path="/order" element={<OrderPage />} />
             <Route path="/account" element={<CustomerAccountPage />} />
             <Route path="/vendor/store/:storeId" element={<VendorPortal />} />
             <Route path="/paddle-viewer" element={<PaddleViewerPage />} />
             <Route path="/paddle-score/:courtId?" element={<PaddleScorerPage />} />
             <Route path="/export-examples" element={<ExportExamples />} />
-            <Route path="/court-order/:courtId?" element={<CourtFoodOrderingPage />} />
 
             {/* ── ADMIN PANEL ── */}
             <Route path="/admin" element={
@@ -98,8 +90,6 @@ export default function App() {
               <Route path="bookings" element={<BookingManager />} />
               <Route path="crm" element={<CrmPage />} />
               <Route path="memberships" element={<MembershipRequests />} />
-              <Route path="pos" element={<PosPage />} />
-              <Route path="sales-history" element={<SalesHistoryPage />} />
               <Route path="vendors" element={<VendorStoresPage />} />
               <Route path="tournament" element={<AdminTournament />} />
               <Route path="tournament-v2" element={<AdminTournamentV2 />} />
