@@ -1,7 +1,7 @@
 // src/auth/AuthContext.jsx
 import { createContext, useContext, useEffect, useState } from "react";
 import { onAuthStateChanged, signOut } from "firebase/auth";
-import { doc, getDoc } from "firebase/firestore";
+import { doc, getDoc, onSnapshot } from "firebase/firestore";
 import { auth, db } from "../firebase";
 
 const AuthContext = createContext(null);
@@ -13,27 +13,36 @@ export function AuthProvider({ children }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const unsub = onAuthStateChanged(auth, async (firebaseUser) => {
+    let unsubDoc = null;
+    const unsubAuth = onAuthStateChanged(auth, (firebaseUser) => {
       if (firebaseUser) {
         setUser(firebaseUser);
-        try {
-          const snap = await getDoc(doc(db, "users", firebaseUser.uid));
+        unsubDoc = onSnapshot(doc(db, "users", firebaseUser.uid), (snap) => {
           if (snap.exists()) {
             const data = snap.data();
             setProfile(data);
             setRole(data.role);
           }
-        } catch (err) {
+          setLoading(false);
+        }, (err) => {
           console.error("Error fetching user profile:", err);
-        }
+          setLoading(false);
+        });
       } else {
         setUser(null);
         setProfile(null);
         setRole(null);
+        setLoading(false);
+        if (unsubDoc) {
+          unsubDoc();
+          unsubDoc = null;
+        }
       }
-      setLoading(false);
     });
-    return () => unsub();
+    return () => {
+      unsubAuth();
+      if (unsubDoc) unsubDoc();
+    };
   }, []);
 
   async function logout() {
@@ -41,7 +50,7 @@ export function AuthProvider({ children }) {
   }
 
   return (
-    <AuthContext.Provider value={{ user, profile, role, loading, logout }}>
+    <AuthContext.Provider value={{ user, profile, setProfile, role, loading, logout }}>
       {children}
     </AuthContext.Provider>
   );

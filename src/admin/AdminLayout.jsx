@@ -8,6 +8,7 @@ import { useAuth } from "../auth/AuthContext";
 import OfflinePreloader from "./OfflinePreloader";
 import RanawLogo from "../components/RanawLogo";
 import { sendBookingSMS } from "../lib/smsService";
+import ProfileModal from "./ProfileModal";
 
 const NAV_LINKS = [
   { to: "/admin/dashboard", label: "Dashboard" },
@@ -35,27 +36,15 @@ const NAV_LINKS_AFTER_TOURNAMENT = [
   { to: "/admin/equipment", label: "Equipment" },
 ];
 
-const SALES_DROPDOWN_LINKS = [
-  { to: "/admin/pos", label: "Food Court POS" },
-  { to: "/admin/sales-history", label: "Transactions and receipts" },
-];
-
-const MARKETPLACE_DROPDOWN_LINKS = [
-  { to: "/admin/vendors", label: "Vendor Stalls" },
-];
-
 export default function AdminLayout() {
   const { profile, role, loading, logout } = useAuth();
   const [showLogout, setShowLogout] = useState(false);
   const [tournamentOpen, setTournamentOpen] = useState(false);
   const [bookingOpen, setBookingOpen] = useState(false);
-  const [salesOpen, setSalesOpen] = useState(false);
-  const [marketplaceOpen, setMarketplaceOpen] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [showProfile, setShowProfile] = useState(false);
   const tournamentRef = useRef(null);
   const bookingRef = useRef(null);
-  const salesRef = useRef(null);
-  const marketplaceRef = useRef(null);
   const notifRef = useRef(null);
   const notifFirstSnapshot = useRef(true);
   const notifOpenRef = useRef(false);
@@ -67,6 +56,7 @@ export default function AdminLayout() {
   const [unseenBookingCount, setUnseenBookingCount] = useState(0);
   const [notifOpen, setNotifOpen] = useState(false);
   const [equipmentWarningCount, setEquipmentWarningCount] = useState(0);
+  const [bookingWarningCount, setBookingWarningCount] = useState(0);
 
   // --- OFFLINE SUPPORT STATE ---
   const [isOnline, setIsOnline] = useState(navigator.onLine);
@@ -98,18 +88,10 @@ export default function AdminLayout() {
 
   const tournamentNavActive = TOURNAMENT_SUBLINKS.some((s) => location.pathname === s.to);
   const bookingNavActive = BOOKING_SUBLINKS.some((s) => location.pathname === s.to);
-  const salesNavActive =
-    location.pathname === "/admin/pos" ||
-    location.pathname === "/admin/sales-history";
-  const marketplaceNavActive = MARKETPLACE_DROPDOWN_LINKS.some(
-    (s) => location.pathname === s.to
-  );
 
   useEffect(() => {
     setTournamentOpen(false);
     setBookingOpen(false);
-    setSalesOpen(false);
-    setMarketplaceOpen(false);
     setMobileMenuOpen(false);
   }, [location.pathname]);
 
@@ -139,12 +121,6 @@ export default function AdminLayout() {
       if (bookingRef.current && !bookingRef.current.contains(e.target)) {
         setBookingOpen(false);
       }
-      if (salesRef.current && !salesRef.current.contains(e.target)) {
-        setSalesOpen(false);
-      }
-      if (marketplaceRef.current && !marketplaceRef.current.contains(e.target)) {
-        setMarketplaceOpen(false);
-      }
       if (notifRef.current && !notifRef.current.contains(e.target)) {
         setNotifOpen(false);
       }
@@ -158,17 +134,78 @@ export default function AdminLayout() {
     if (loading || role !== "admin") {
       setPendingBookingCount(0);
       setUnseenBookingCount(0);
+      setBookingWarningCount(0);
       notifFirstSnapshot.current = true;
       bookingStatusByIdRef.current = new Map();
       return undefined;
     }
     const q = collection(db, "bookings");
+    let activeBookingsForWarning = [];
+
+    const checkBookingAlerts = () => {
+      const now = new Date();
+      const todayStr = [
+        now.getFullYear(),
+        String(now.getMonth() + 1).padStart(2, "0"),
+        String(now.getDate()).padStart(2, "0"),
+      ].join("-");
+      
+      const nowMs = now.getTime();
+      let warnings = 0;
+      
+      for (const b of activeBookingsForWarning) {
+        if (b.date !== todayStr) continue;
+        
+        const timeStr = String(b.timeSlot || "").trim();
+        let startMins = 0;
+        const match12 = timeStr.match(/^(\d{1,2}):(\d{2})\s*([AP]M)$/i);
+        if (match12) {
+          let hh = parseInt(match12[1], 10) % 12;
+          const mm = parseInt(match12[2], 10);
+          if (match12[3].toUpperCase() === "PM") hh += 12;
+          startMins = hh * 60 + mm;
+        } else {
+          const match24 = timeStr.match(/^(\d{1,2}):(\d{2})$/);
+          if (match24) {
+            startMins = parseInt(match24[1], 10) * 60 + parseInt(match24[2], 10);
+          }
+        }
+        
+        if (startMins === 0) continue;
+        
+        const duration = Number(b.duration) || 1;
+        const endMins = startMins + duration * 60;
+        
+        const endDate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), Math.floor(endMins / 60), endMins % 60, 0);
+        const expMs = endDate.getTime();
+        
+        const minsLeft = (expMs - nowMs) / 60000;
+        const isNearDue5 = minsLeft <= 5 && minsLeft >= -30; // Shows 5 mins before until 30 mins after
+        
+        if (isNearDue5) {
+          warnings++;
+        }
+      }
+      setBookingWarningCount(warnings);
+    };
+
+    const intervalId = setInterval(checkBookingAlerts, 60000);
+
     const unsub = onSnapshot(
       q,
       (snap) => {
         const nextMap = bookingStatusByIdRef.current;
         const normalizeStatus = (x) => String(x || "").trim().toLowerCase();
         const isPending = (x) => normalizeStatus(x) === "pending";
+
+        activeBookingsForWarning = snap.docs
+          .map(d => ({ id: d.id, ...d.data() }))
+          .filter(b => {
+             const st = normalizeStatus(b.status);
+             return st === "approved" || st === "ongoing";
+          });
+
+        checkBookingAlerts();
 
         const nextPendingCount = snap.docs.reduce(
           (sum, d) => (isPending(d.data()?.status) ? sum + 1 : sum),
@@ -208,7 +245,10 @@ export default function AdminLayout() {
         setUnseenBookingCount(0);
       }
     );
-    return () => unsub();
+    return () => {
+      unsub();
+      clearInterval(intervalId);
+    };
   }, [loading, role]);
 
   /** Active Equipment Tracking & SMS Alerts */
@@ -237,7 +277,7 @@ export default function AdminLayout() {
         
         const isOverdue = expMs < nowMs;
         const minsLeft = (expMs - nowMs) / 60000;
-        const isNearDue = !isOverdue && minsLeft <= 30;
+        const isNearDue = !isOverdue && minsLeft <= 5; // Changed from 30 to 5
 
         if (isOverdue || isNearDue) {
           warnings++;
@@ -245,8 +285,9 @@ export default function AdminLayout() {
 
         const contact = b.contactNumber?.trim();
         if (contact) {
+          // Keep 30 min logic for SMS if desired, or change to 5. We'll change SMS to 5min to match user intent.
           if (isNearDue && !b.warningSmsSent) {
-            const msg = `Assalamu alaikum! RANAW PICKLEBALL COURT: Your equipment rental is due in 30 minutes. Please return it on time to avoid overdue charges. Shukran!`;
+            const msg = `Assalamu alaikum! RANAW PICKLEBALL COURT: Your equipment rental is due in 5 minutes. Please return it on time to avoid overdue charges. Shukran!`;
             b.warningSmsSent = true; 
             sendBookingSMS(b.id, contact, msg);
             updateDoc(doc(db, "borrowRecords", b.id), { warningSmsSent: true }).catch(console.error);
@@ -322,13 +363,17 @@ export default function AdminLayout() {
                     }`}
                   onClick={() => {
                     setTournamentOpen(false);
-                    setSalesOpen(false);
                     setBookingOpen((o) => !o);
                   }}
                   aria-expanded={bookingOpen}
                   aria-haspopup="true"
                 >
-                  Booking
+                  <div className="flex items-center gap-1.5">
+                    Booking
+                    {bookingWarningCount > 0 && (
+                      <span className="inline-flex w-2 h-2 bg-amber-500 rounded-full animate-pulse shadow-[0_0_8px_rgba(245,158,11,0.6)]" />
+                    )}
+                  </div>
                   <span className="material-symbols-outlined text-[18px] leading-none">
                     {bookingOpen ? "expand_less" : "expand_more"}
                   </span>
@@ -353,91 +398,6 @@ export default function AdminLayout() {
                   </div>
                 )}
               </div>
-              <div
-                className="relative"
-                ref={salesRef}
-              >
-                <button
-                  type="button"
-                  className={`text-xs font-medium transition-colors flex items-center gap-0.5 ${salesNavActive || salesOpen
-                    ? "nav-link-active text-cyan-400"
-                    : "nav-link text-slate-400 hover:text-cyan-400"
-                    }`}
-                  onClick={() => {
-                    setBookingOpen(false);
-                    setTournamentOpen(false);
-                    setMarketplaceOpen(false);
-                    setSalesOpen((o) => !o);
-                  }}
-                  aria-expanded={salesOpen}
-                  aria-haspopup="true"
-                >
-                  Sales
-                  <span className="material-symbols-outlined text-[18px] leading-none">
-                    {salesOpen ? "expand_less" : "expand_more"}
-                  </span>
-                </button>
-                {salesOpen && (
-                  <div className="sales-dropdown-panel absolute left-0 top-full mt-1 py-2 px-2 min-w-[240px] max-w-[92vw] rounded-xl border border-slate-700/90 bg-[#151e2d] shadow-[0_12px_40px_rgba(0,0,0,0.45),0_0_1px_rgba(34,211,238,0.35)] z-[60]">
-                    <div className="space-y-0.5">
-                      {SALES_DROPDOWN_LINKS.map((item) => (
-                        <NavLink
-                          key={item.to}
-                          to={item.to}
-                          className={({ isActive }) =>
-                            `sales-dropdown-item block rounded-lg px-3 py-2.5 text-xs font-semibold transition-colors ${isActive ? "bg-slate-800/90 text-cyan-400" : "text-slate-200 hover:bg-slate-800/70"
-                            }`
-                          }
-                          onClick={() => setSalesOpen(false)}
-                        >
-                          {item.label}
-                        </NavLink>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-              <div className="relative" ref={marketplaceRef}>
-                <button
-                  type="button"
-                  className={`text-xs font-medium transition-colors flex items-center gap-0.5 ${marketplaceNavActive || marketplaceOpen
-                    ? "nav-link-active text-cyan-400"
-                    : "nav-link text-slate-400 hover:text-cyan-400"
-                    }`}
-                  onClick={() => {
-                    setBookingOpen(false);
-                    setTournamentOpen(false);
-                    setSalesOpen(false);
-                    setMarketplaceOpen((o) => !o);
-                  }}
-                  aria-expanded={marketplaceOpen}
-                  aria-haspopup="true"
-                >
-                  Food court
-                  <span className="material-symbols-outlined text-[18px] leading-none">
-                    {marketplaceOpen ? "expand_less" : "expand_more"}
-                  </span>
-                </button>
-                {marketplaceOpen && (
-                  <div className="sales-dropdown-panel absolute left-0 top-full mt-1 py-2 px-2 min-w-[220px] rounded-xl border border-slate-700/90 bg-[#151e2d] shadow-lg z-[60]">
-                    <div className="space-y-0.5">
-                      {MARKETPLACE_DROPDOWN_LINKS.map((item) => (
-                        <NavLink
-                          key={item.to}
-                          to={item.to}
-                          className={({ isActive }) =>
-                            `sales-dropdown-item block rounded-lg px-3 py-2.5 text-xs font-semibold transition-colors ${isActive ? "bg-slate-800/90 text-cyan-400" : "text-slate-200 hover:bg-slate-800/70"
-                            }`
-                          }
-                          onClick={() => setMarketplaceOpen(false)}
-                        >
-                          {item.label}
-                        </NavLink>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
               <div className="relative" ref={tournamentRef}>
                 <button
                   type="button"
@@ -447,7 +407,6 @@ export default function AdminLayout() {
                     }`}
                   onClick={() => {
                     setBookingOpen(false);
-                    setSalesOpen(false);
                     setTournamentOpen((o) => !o);
                   }}
                   aria-expanded={tournamentOpen}
@@ -590,7 +549,13 @@ export default function AdminLayout() {
                   />
                 </div>
                 {showLogout && (
-                  <div className="absolute top-full right-0 mt-2 bg-[#151e2d] border border-slate-800 rounded-xl p-2 shadow-lg">
+                  <div className="absolute top-full right-0 mt-2 bg-[#151e2d] border border-slate-800 rounded-xl p-2 shadow-lg z-[150]">
+                    <button
+                      className="w-full text-left px-3 py-2 text-sm text-slate-300 hover:text-white hover:bg-slate-800 rounded-lg transition-colors"
+                      onClick={() => { setShowLogout(false); setShowProfile(true); }}
+                    >
+                      My Profile
+                    </button>
                     <button
                       className="w-full text-left px-3 py-2 text-sm text-slate-300 hover:text-white hover:bg-slate-800 rounded-lg transition-colors"
                       onClick={handleLogout}
@@ -664,41 +629,12 @@ export default function AdminLayout() {
                         }`
                       }
                     >
-                      {s.label}
-                    </NavLink>
-                  </li>
-                ))}
-              </ul>
-              <p className="px-2 pt-4 pb-2 text-[10px] font-bold text-slate-500 uppercase tracking-widest">Sales</p>
-              <ul className="space-y-0.5">
-                {SALES_DROPDOWN_LINKS.map((item) => (
-                  <li key={item.to}>
-                    <NavLink
-                      to={item.to}
-                      onClick={() => setMobileMenuOpen(false)}
-                      className={({ isActive }) =>
-                        `block rounded-lg px-3 py-3 text-sm font-medium ${isActive ? "bg-slate-800 text-cyan-400" : "text-slate-200 hover:bg-slate-800/80"
-                        }`
-                      }
-                    >
-                      {item.label}
-                    </NavLink>
-                  </li>
-                ))}
-              </ul>
-              <p className="px-2 pt-4 pb-2 text-[10px] font-bold text-slate-500 uppercase tracking-widest">Food court</p>
-              <ul className="space-y-0.5">
-                {MARKETPLACE_DROPDOWN_LINKS.map((item) => (
-                  <li key={item.to}>
-                    <NavLink
-                      to={item.to}
-                      onClick={() => setMobileMenuOpen(false)}
-                      className={({ isActive }) =>
-                        `block rounded-lg px-3 py-3 text-sm font-medium ${isActive ? "bg-slate-800 text-cyan-400" : "text-slate-200 hover:bg-slate-800/80"
-                        }`
-                      }
-                    >
-                      {item.label}
+                      <div className="flex items-center gap-2">
+                        {s.label}
+                        {bookingWarningCount > 0 && s.to === "/admin/bookings" && (
+                          <span className="inline-flex items-center justify-center w-2 h-2 bg-amber-500 rounded-full animate-pulse shadow-[0_0_8px_rgba(245,158,11,0.6)]" />
+                        )}
+                      </div>
                     </NavLink>
                   </li>
                 ))}
@@ -777,6 +713,8 @@ export default function AdminLayout() {
           </button>
         </div>
       </footer>
+
+      {showProfile && <ProfileModal onClose={() => setShowProfile(false)} />}
     </div>
   );
 }

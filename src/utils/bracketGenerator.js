@@ -2,37 +2,39 @@
 // src/utils/bracketGenerator.js
 
 // Pickleball scoring rules: 11 points, win by 2
-export function isGameWon(scoreA, scoreB) {
+export function isGameWon(scoreA, scoreB, winPoints = 11) {
   // Both must be at least 11 (except one is exactly 11 and other is 10 or less)
-  if (scoreA >= 11 && scoreB <= scoreA - 2) return true;
-  if (scoreB >= 11 && scoreA <= scoreB - 2) return true;
+  if (scoreA >= winPoints && scoreB <= scoreA - 2) return true;
+  if (scoreB >= winPoints && scoreA <= scoreB - 2) return true;
   return false;
 }
 
 // Get the winner of a game: "A", "B", or null
-export function getGameWinner(scoreA, scoreB) {
-  if (scoreA >= 11 && scoreB <= scoreA - 2) return "A";
-  if (scoreB >= 11 && scoreA <= scoreB - 2) return "B";
+export function getGameWinner(scoreA, scoreB, winPoints = 11) {
+  if (scoreA >= winPoints && scoreB <= scoreA - 2) return "A";
+  if (scoreB >= winPoints && scoreA <= scoreB - 2) return "B";
   return null;
 }
 
 /** Rally scoring: first to 21, win by 2 */
 export const RALLY_WIN_POINTS = 21;
 
-export function isRallyGameWon(scoreA, scoreB) {
-  if (scoreA >= RALLY_WIN_POINTS && scoreB <= scoreA - 2) return true;
-  if (scoreB >= RALLY_WIN_POINTS && scoreA <= scoreB - 2) return true;
+export function isRallyGameWon(scoreA, scoreB, winPoints = 21) {
+  if (scoreA >= winPoints && scoreB <= scoreA - 2) return true;
+  if (scoreB >= winPoints && scoreA <= scoreB - 2) return true;
   return false;
 }
 
-export function getRallyGameWinner(scoreA, scoreB) {
-  if (scoreA >= RALLY_WIN_POINTS && scoreB <= scoreA - 2) return "A";
-  if (scoreB >= RALLY_WIN_POINTS && scoreA <= scoreB - 2) return "B";
+export function getRallyGameWinner(scoreA, scoreB, winPoints = 21) {
+  if (scoreA >= winPoints && scoreB <= scoreA - 2) return "A";
+  if (scoreB >= winPoints && scoreA <= scoreB - 2) return "B";
   return null;
 }
 
-export function isGameWonForMode(scoreA, scoreB, scoringMode) {
-  return scoringMode === "rally" ? isRallyGameWon(scoreA, scoreB) : isGameWon(scoreA, scoreB);
+export function isGameWonForMode(scoreA, scoreB, scoringMode, winPoints) {
+  return scoringMode === "rally" 
+    ? isRallyGameWon(scoreA, scoreB, winPoints ?? 21) 
+    : isGameWon(scoreA, scoreB, winPoints ?? 11);
 }
 
 /** Doubles rally: even team score → right serves, odd → left */
@@ -44,8 +46,8 @@ export function rallyServingSideForTeamScore(teamScore) {
  * Rally scoring: every rally won awards a point; side-out when receiving team wins.
  * Updates match.currentGame for next rally (serve + doubles position).
  */
-export function recordRallyPoint(match, scoringTeam, newScoreA, newScoreB) {
-  const gameWinner = getRallyGameWinner(newScoreA, newScoreB);
+export function recordRallyPoint(match, scoringTeam, newScoreA, newScoreB, winPoints = 21) {
+  const gameWinner = getRallyGameWinner(newScoreA, newScoreB, winPoints);
   if (gameWinner) {
     return {
       gameEnded: true,
@@ -140,7 +142,7 @@ export function recordFault(match) {
 // Traditional pickleball: only the serving team can score points. If the receiving team
 // "scores" (receiver POINT button), it is a fault on the serve — no points change; 1st→2nd
 // serve or side out (same as recordFault).
-export function recordPoint(match, scoringTeam, scoreA, scoreB) {
+export function recordPoint(match, scoringTeam, scoreA, scoreB, winPoints = 11) {
   const current = match.currentGame || getNextServer(match);
   const servingTeam = current.servingTeam;
 
@@ -154,7 +156,7 @@ export function recordPoint(match, scoringTeam, scoreA, scoreB) {
     };
   }
 
-  const gameWinner = getGameWinner(scoreA, scoreB);
+  const gameWinner = getGameWinner(scoreA, scoreB, winPoints);
 
   if (gameWinner) {
     return {
@@ -539,14 +541,15 @@ export function advanceLoser(match, matchMap) {
 
 // winner must always be "A" or "B" — never a team name
 // scoreA and scoreB are the final scores of the game
-export function recordSetWin(match, winner, matchMap, scoreA = 0, scoreB = 0, scoringMode = "traditional") {
+export function recordSetWin(match, winner, matchMap, scoreA = 0, scoreB = 0, scoringMode = "traditional", winPoints) {
   if (winner !== "A" && winner !== "B") {
     console.error("recordSetWin: winner must be 'A' or 'B', got:", winner);
     return;
   }
 
+  const defaultWinPoints = scoringMode === "rally" ? 21 : 11;
   const gameWinner =
-    scoringMode === "rally" ? getRallyGameWinner(scoreA, scoreB) : getGameWinner(scoreA, scoreB);
+    scoringMode === "rally" ? getRallyGameWinner(scoreA, scoreB, winPoints ?? defaultWinPoints) : getGameWinner(scoreA, scoreB, winPoints ?? defaultWinPoints);
   if (!gameWinner) {
     console.error(
       "recordSetWin: Invalid game score.",

@@ -144,7 +144,14 @@ export default function InventoryPage() {
       qi,
       { includeMetadataChanges: true },
       (snap) => {
-        setItems(snap.docs.map((d) => ({ id: d.id, hasPendingWrites: d.metadata.hasPendingWrites, ...d.data() })));
+        setItems(snap.docs.map((d) => {
+          const data = d.data();
+          if (data.availableQty > data.totalQty) {
+            data.availableQty = data.totalQty;
+            updateDoc(doc(db, "inventoryItems", d.id), { availableQty: data.totalQty }).catch(console.error);
+          }
+          return { id: d.id, hasPendingWrites: d.metadata.hasPendingWrites, ...data };
+        }));
         setLoading(false);
       },
       (err) => {
@@ -357,6 +364,8 @@ export default function InventoryPage() {
         }]
       });
 
+      setSellForm({ buyerName: "", itemId: "", quantity: 1, cashReceived: "" });
+
     } catch (err) {
       console.error(err);
     }
@@ -416,7 +425,7 @@ export default function InventoryPage() {
         const cur = snap.data();
         const oldT = Number(cur.totalQty) || 0;
         const oldA = Number(cur.availableQty) || 0;
-        const onLoan = oldT - oldA;
+        const onLoan = Math.max(0, oldT - oldA);
         const newTotal = total;
         if (newTotal < onLoan) {
           toast.error(`Total must be at least ${onLoan} (currently on loan).`);
@@ -567,15 +576,22 @@ export default function InventoryPage() {
     const confirmMsg = `Are you sure you want to cancel the rent for “${b.borrowerName}” and remove the record completely?`;
     if (!window.confirm(confirmMsg)) return;
     try {
+      const snap = await getDoc(doc(db, "borrowRecords", b.id));
+      if (!snap.exists()) return;
+      const data = snap.data();
+
       const batch = writeBatch(db);
       batch.delete(doc(db, "borrowRecords", b.id));
-      for (const l of b.items || []) {
-        const q = Number(l.quantity) || 0;
-        if (q <= 0) continue;
-        batch.update(doc(db, "inventoryItems", l.itemId), {
-          availableQty: increment(q),
-          updatedAt: serverTimestamp(),
-        });
+      
+      if (data.status !== "returned") {
+        for (const l of b.items || []) {
+          const q = Number(l.quantity) || 0;
+          if (q <= 0) continue;
+          batch.update(doc(db, "inventoryItems", l.itemId), {
+            availableQty: increment(q),
+            updatedAt: serverTimestamp(),
+          });
+        }
       }
       await wrapSync(batch.commit(), {
         successMsg: "Rent cancelled — stock returned",
@@ -599,6 +615,10 @@ export default function InventoryPage() {
     }
     if (!snap.exists()) return;
     const data = snap.data();
+    if (data.status === "returned") {
+      toast.error("Item is already returned.");
+      return;
+    }
     const actualTs = Timestamp.now();
     const lateH = computeLateHours(data.expectedReturnAt, actualTs.toMillis());
     const lines = data.items || [];
@@ -1304,7 +1324,7 @@ export default function InventoryPage() {
                       <tr key={b.id}>
                         <td className="ad-td-main">
                           <div className="flex items-center gap-2">
-                            {b.renterName}
+                            {b.borrowerName}
                             {b.hasPendingWrites && <span className="ad-badge ad-badge-pending text-[10px] px-1 py-0 border border-amber-500/20">Pending Sync</span>}
                           </div>
                         </td>
@@ -1404,7 +1424,7 @@ export default function InventoryPage() {
                       ) : (
                         reportFilteredBorrows.slice((historyPage - 1) * PAGE_SIZE, historyPage * PAGE_SIZE).map((b) => (
                           <tr key={b.id}>
-                            <td className="ad-td-main">{b.renterName}</td>
+                            <td className="ad-td-main">{b.borrowerName}</td>
                             <td className="text-sm">
                               {(b.items || []).map((l) => `${l.itemName} ×${l.quantity}`).join(", ")}
                             </td>
@@ -1520,7 +1540,7 @@ export default function InventoryPage() {
                 ) : (
                   overdueInReportPeriod.map((b) => (
                     <li key={b.id} className="border border-[var(--ad-border)] rounded p-2">
-                      <div className="font-semibold">{b.renterName}</div>
+                      <div className="font-semibold">{b.borrowerName}</div>
                       <div className="text-xs text-amber-400">
                         Was due {format(tsToDate(b.expectedReturnAt) || new Date(), "MMM d, yyyy HH:mm")}
                       </div>

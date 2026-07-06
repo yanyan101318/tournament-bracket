@@ -190,10 +190,6 @@ export default function AdminDashboard() {
         <Link to="/admin/bookings" className="text-cyan-400 font-semibold hover:underline">
           All bookings
         </Link>
-        <span className="text-slate-600">·</span>
-        <Link to="/admin/payments" className="text-cyan-400 font-semibold hover:underline">
-          Payments
-        </Link>
       </div>
     </div>
   );

@@ -319,12 +319,6 @@ export default function AdminSchedule() {
             >
               All bookings
             </Link>
-            <Link
-              to="/admin/payments"
-              className="flex-1 text-center py-2 rounded-lg bg-slate-800 text-slate-200 text-xs font-bold hover:bg-slate-700 transition-colors"
-            >
-              All payments
-            </Link>
           </div>
         </div>
       </div>

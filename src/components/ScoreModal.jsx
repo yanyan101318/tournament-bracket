@@ -25,16 +25,16 @@ function getStoredScore(matchId) {
       const p = JSON.parse(raw);
       return { a: p.a ?? 0, b: p.b ?? 0 };
     }
-  } catch (_) {}
+  } catch (_) { }
   return { a: 0, b: 0 };
 }
 
 function saveScore(matchId, a, b) {
-  try { localStorage.setItem(`score_${matchId}`, JSON.stringify({ a, b })); } catch (_) {}
+  try { localStorage.setItem(`score_${matchId}`, JSON.stringify({ a, b })); } catch (_) { }
 }
 
 function clearScore(matchId) {
-  try { localStorage.removeItem(`score_${matchId}`); } catch (_) {}
+  try { localStorage.removeItem(`score_${matchId}`); } catch (_) { }
 }
 
 export default function ScoreModal({
@@ -47,9 +47,9 @@ export default function ScoreModal({
 }) {
   const { teamA, teamB, sets = [], winner, format, matchId } = match;
   const needed = setsNeeded(format);
-  const total  = setsTotal(format);
-  const winsA  = sets.filter(s => s.winner === "A").length;
-  const winsB  = sets.filter(s => s.winner === "B").length;
+  const total = setsTotal(format);
+  const winsA = sets.filter(s => s.winner === "A").length;
+  const winsB = sets.filter(s => s.winner === "B").length;
 
   const [localA, setLocalA] = useState(() => getStoredScore(matchId).a);
   const [localB, setLocalB] = useState(() => getStoredScore(matchId).b);
@@ -57,10 +57,10 @@ export default function ScoreModal({
   const [flashB, setFlashB] = useState(null);
   const [autoGameEnded, setAutoGameEnded] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [saving, setSaving] = useState(false);
   const [scoringMode, setScoringMode] = useState(() =>
-    getStoredScoringMode(matchId, tournamentScoringMode),
+    match.scoringMode || getStoredScoringMode(matchId, tournamentScoringMode),
   );
+  const winScore = match.winScore || (scoringMode === "rally" ? 21 : 11);
   const [courtSwapped, setCourtSwapped] = useState(() => getCourtSwap(matchId));
   const [showCourtChangePopup, setShowCourtChangePopup] = useState(false);
   const crossedElevenRef = useRef(false);
@@ -77,8 +77,8 @@ export default function ScoreModal({
   }, [matchId]);
 
   useEffect(() => {
-    setScoringMode(getStoredScoringMode(matchId, tournamentScoringMode));
-  }, [matchId, tournamentScoringMode]);
+    setScoringMode(match.scoringMode || getStoredScoringMode(matchId, tournamentScoringMode));
+  }, [matchId, match.scoringMode, tournamentScoringMode]);
 
   useEffect(() => {
     setCourtSwapped(getCourtSwap(matchId));
@@ -93,24 +93,25 @@ export default function ScoreModal({
   useEffect(() => {
     if (scoringMode !== "rally") return;
     const max = Math.max(localA, localB);
-    if (max >= 11 && !crossedElevenRef.current) {
+    const swapAt = winScore === 21 ? 11 : winScore === 15 ? 8 : Math.ceil(winScore / 2);
+    if (max >= swapAt && !crossedElevenRef.current) {
       crossedElevenRef.current = true;
       setShowCourtChangePopup(true);
     }
-  }, [localA, localB, scoringMode]);
+  }, [localA, localB, scoringMode, winScore]);
 
   // Auto-detect when game ends
   useEffect(() => {
     const won =
       scoringMode === "rally"
-        ? isRallyGameWon(localA, localB)
-        : isGameWon(localA, localB);
+        ? isRallyGameWon(localA, localB, winScore)
+        : isGameWon(localA, localB, winScore);
     if (won && !autoGameEnded && (localA > 0 || localB > 0)) {
       setAutoGameEnded(true);
       const winningTeam =
         scoringMode === "rally"
-          ? getRallyGameWinner(localA, localB)
-          : getGameWinner(localA, localB);
+          ? getRallyGameWinner(localA, localB, winScore)
+          : getGameWinner(localA, localB, winScore);
       // Trigger auto set win after a brief delay for UI feedback
       setTimeout(() => {
         onSetWin(match, winningTeam, localA, localB);
@@ -124,7 +125,7 @@ export default function ScoreModal({
 
   function triggerFlash(side, type) {
     if (side === "A") { setFlashA(type); setTimeout(() => setFlashA(null), 300); }
-    else              { setFlashB(type); setTimeout(() => setFlashB(null), 300); }
+    else { setFlashB(type); setTimeout(() => setFlashB(null), 300); }
   }
 
   async function handlePointScored(scoringTeam) {
@@ -147,13 +148,13 @@ export default function ScoreModal({
       if (scoringMode === "rally") {
         if (scoringTeam === "A") newScoreA++;
         else newScoreB++;
-        result = recordRallyPoint(m, scoringTeam, newScoreA, newScoreB);
+        result = recordRallyPoint(m, scoringTeam, newScoreA, newScoreB, winScore);
       } else {
         if (m.currentGame.servingTeam === scoringTeam) {
           if (scoringTeam === "A") newScoreA++;
           else newScoreB++;
         }
-        result = recordPoint(m, scoringTeam, newScoreA, newScoreB);
+        result = recordPoint(m, scoringTeam, newScoreA, newScoreB, winScore);
       }
 
       if (result.gameEnded) {
@@ -187,7 +188,7 @@ export default function ScoreModal({
       const newScoreA = localA - 1;
       setLocalA(newScoreA);
       triggerFlash("A", "minus");
-      
+
       const m = {
         ...match,
         sets: [...(match.sets || [])],
@@ -210,7 +211,7 @@ export default function ScoreModal({
       const newScoreB = localB - 1;
       setLocalB(newScoreB);
       triggerFlash("B", "minus");
-      
+
       const m = {
         ...match,
         sets: [...(match.sets || [])],
@@ -267,7 +268,7 @@ export default function ScoreModal({
                 color: scoringMode === "rally" ? "var(--pickle)" : undefined,
               }}
             >
-              {scoringMode === "rally" ? "Rally (21)" : "Traditional (11)"}
+              {scoringMode === "rally" ? `Rally (${winScore})` : `Traditional (${winScore})`}
             </span>
             {hasUnsaved && <span className="score-saved-badge">● Score saved locally</span>}
           </div>
@@ -306,16 +307,17 @@ export default function ScoreModal({
                 <button
                   type="button"
                   onClick={() => {
+                    if (match.scoringMode) return;
                     setScoringMode("traditional");
                     setStoredScoringMode(matchId, "traditional");
                   }}
-                  disabled={saving}
+                  disabled={saving || !!match.scoringMode}
                   style={{
                     padding: "6px 12px",
                     fontSize: "0.75rem",
                     fontWeight: 700,
                     border: "none",
-                    cursor: saving ? "not-allowed" : "pointer",
+                    cursor: (saving || !!match.scoringMode) ? "not-allowed" : "pointer",
                     background: scoringMode === "traditional" ? "rgba(200,230,58,0.15)" : "transparent",
                   }}
                 >
@@ -324,17 +326,18 @@ export default function ScoreModal({
                 <button
                   type="button"
                   onClick={() => {
+                    if (match.scoringMode) return;
                     setScoringMode("rally");
                     setStoredScoringMode(matchId, "rally");
                   }}
-                  disabled={saving}
+                  disabled={saving || !!match.scoringMode}
                   style={{
                     padding: "6px 12px",
                     fontSize: "0.75rem",
                     fontWeight: 700,
                     border: "none",
                     borderLeft: "1px solid var(--border)",
-                    cursor: saving ? "not-allowed" : "pointer",
+                    cursor: (saving || !!match.scoringMode) ? "not-allowed" : "pointer",
                     background: scoringMode === "rally" ? "rgba(200,230,58,0.15)" : "transparent",
                   }}
                 >
@@ -374,15 +377,15 @@ export default function ScoreModal({
             <div className="game-info-row">
               <div className="game-status">
                 <span className="status-label">🎮 Game Status</span>
-                {(scoringMode === "rally" ? isRallyGameWon(localA, localB) : isGameWon(localA, localB)) ? (
+                {(scoringMode === "rally" ? isRallyGameWon(localA, localB, winScore) : isGameWon(localA, localB, winScore)) ? (
                   <span className="status-value ready">🎯 Auto-Recording...</span>
                 ) : scoringMode === "rally" ? (
-                  localA >= 20 || localB >= 20 ? (
+                  localA >= (winScore - 1) || localB >= (winScore - 1) ? (
                     <span className="status-value close">⚡ Close (need 2-point lead)</span>
                   ) : (
                     <span className="status-value playing">Playing ({Math.max(localA, localB)} pts)</span>
                   )
-                ) : localA >= 10 || localB >= 10 ? (
+                ) : localA >= (winScore - 1) || localB >= (winScore - 1) ? (
                   <span className="status-value close">⚡ Close (need 2-point lead)</span>
                 ) : (
                   <span className="status-value playing">Playing ({Math.max(localA, localB)} pts)</span>
@@ -427,7 +430,7 @@ export default function ScoreModal({
                 <div className="panel-name">
                   {teamA}
                   {match.currentGame?.servingTeam === "A" && (
-                    <div style={{fontSize: "0.7rem", color: "var(--pickle)", marginTop: "4px", fontWeight: "600", textTransform: "uppercase", letterSpacing: "0.5px"}}>
+                    <div style={{ fontSize: "0.7rem", color: "var(--pickle)", marginTop: "4px", fontWeight: "600", textTransform: "uppercase", letterSpacing: "0.5px" }}>
                       {scoringMode === "rally"
                         ? (match.currentGame.servingSide === "right" ? "🎾 RIGHT COURT" : "🎾 LEFT COURT")
                         : (match.currentGame.firstServer ? "🎾 1ST SERVER" : "🎾 2ND SERVER")}
@@ -441,20 +444,20 @@ export default function ScoreModal({
                 </div>
 
                 {/* Button Group - POINT and MINUS */}
-                <div className="score-btn-group" style={{width: "100%", marginTop: "12px", gap: "8px", flexDirection: "column"}}>
-                  <button 
-                    className="score-action-btn btn-plus" 
+                <div className="score-btn-group" style={{ width: "100%", marginTop: "12px", gap: "8px", flexDirection: "column" }}>
+                  <button
+                    className="score-action-btn btn-plus"
                     onClick={() => handlePointScored("A")}
                     disabled={saving || !onPersistMatch}
-                    style={{width: "100%", fontSize: "1rem"}}
+                    style={{ width: "100%", fontSize: "1rem" }}
                   >
                     <span>POINT</span>
                   </button>
-                  <button 
-                    className="score-action-btn btn-minus" 
+                  <button
+                    className="score-action-btn btn-minus"
                     onClick={() => handleUndoPointA()}
                     disabled={saving || localA === 0}
-                    style={{width: "100%", fontSize: "0.9rem", opacity: localA === 0 ? 0.4 : 1, cursor: localA === 0 ? "not-allowed" : "pointer"}}
+                    style={{ width: "100%", fontSize: "0.9rem", opacity: localA === 0 ? 0.4 : 1, cursor: localA === 0 ? "not-allowed" : "pointer" }}
                   >
                     <span>UNDO</span>
                   </button>
@@ -463,7 +466,7 @@ export default function ScoreModal({
                 {format !== "bo1" && (
                   <div className="panel-set-wins">
                     {Array.from({ length: needed }).map((_, i) => (
-                      <span key={i} className={`set-pip-lg ${i < winsA ? "pip-filled-a" : ""}`}/>
+                      <span key={i} className={`set-pip-lg ${i < winsA ? "pip-filled-a" : ""}`} />
                     ))}
                   </div>
                 )}
@@ -481,7 +484,7 @@ export default function ScoreModal({
                     <div className="score-center-sets">
                       {Array.from({ length: total }).map((_, i) => {
                         const s = sets[i];
-                        return <div key={i} className={`center-pip ${s?.winner === "A" ? "cpip-a" : s?.winner === "B" ? "cpip-b" : "cpip-empty"}`}/>;
+                        return <div key={i} className={`center-pip ${s?.winner === "A" ? "cpip-a" : s?.winner === "B" ? "cpip-b" : "cpip-empty"}`} />;
                       })}
                     </div>
                     <div className="score-center-tally">{winsA} – {winsB}</div>
@@ -495,7 +498,7 @@ export default function ScoreModal({
                 <div className="panel-name">
                   {teamB}
                   {match.currentGame?.servingTeam === "B" && (
-                    <div style={{fontSize: "0.7rem", color: "var(--pickle)", marginTop: "4px", fontWeight: "600", textTransform: "uppercase", letterSpacing: "0.5px"}}>
+                    <div style={{ fontSize: "0.7rem", color: "var(--pickle)", marginTop: "4px", fontWeight: "600", textTransform: "uppercase", letterSpacing: "0.5px" }}>
                       {scoringMode === "rally"
                         ? (match.currentGame.servingSide === "right" ? "🎾 RIGHT COURT" : "🎾 LEFT COURT")
                         : (match.currentGame.firstServer ? "🎾 1ST SERVER" : "🎾 2ND SERVER")}
@@ -508,20 +511,20 @@ export default function ScoreModal({
                 </div>
 
                 {/* Button Group - POINT and MINUS */}
-                <div className="score-btn-group" style={{width: "100%", marginTop: "12px", gap: "8px", flexDirection: "column"}}>
-                  <button 
-                    className="score-action-btn btn-plus" 
+                <div className="score-btn-group" style={{ width: "100%", marginTop: "12px", gap: "8px", flexDirection: "column" }}>
+                  <button
+                    className="score-action-btn btn-plus"
                     onClick={() => handlePointScored("B")}
                     disabled={saving || !onPersistMatch}
-                    style={{width: "100%", fontSize: "1rem", background: "linear-gradient(145deg, #2a1500, #1c0f00)", borderColor: "#f9731655"}}
+                    style={{ width: "100%", fontSize: "1rem", background: "linear-gradient(145deg, #2a1500, #1c0f00)", borderColor: "#f9731655" }}
                   >
                     <span>POINT</span>
                   </button>
-                  <button 
-                    className="score-action-btn btn-minus" 
+                  <button
+                    className="score-action-btn btn-minus"
                     onClick={() => handleUndoPointB()}
                     disabled={saving || localB === 0}
-                    style={{width: "100%", fontSize: "0.9rem", opacity: localB === 0 ? 0.4 : 1, cursor: localB === 0 ? "not-allowed" : "pointer"}}
+                    style={{ width: "100%", fontSize: "0.9rem", opacity: localB === 0 ? 0.4 : 1, cursor: localB === 0 ? "not-allowed" : "pointer" }}
                   >
                     <span>UNDO</span>
                   </button>
@@ -530,7 +533,7 @@ export default function ScoreModal({
                 {format !== "bo1" && (
                   <div className="panel-set-wins">
                     {Array.from({ length: needed }).map((_, i) => (
-                      <span key={i} className={`set-pip-lg ${i < winsB ? "pip-filled-b" : ""}`}/>
+                      <span key={i} className={`set-pip-lg ${i < winsB ? "pip-filled-b" : ""}`} />
                     ))}
                   </div>
                 )}
@@ -578,7 +581,7 @@ export default function ScoreModal({
                 Change court now
               </div>
               <p style={{ fontSize: "0.88rem", color: "var(--text-muted)", marginBottom: "14px", lineHeight: 1.45 }}>
-                A team has reached 11 points. Switch sides on the court, then tap <strong>Change court</strong> if the display should match.
+                A team has reached the mid-point. Switch sides on the court, then tap <strong>Change court</strong> if the display should match.
               </p>
               <button type="button" className="confirm-proceed" style={{ width: "100%" }} onClick={() => setShowCourtChangePopup(false)}>
                 OK

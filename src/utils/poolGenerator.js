@@ -69,7 +69,7 @@ export function generatePools(teams, numPools) {
  * Generate Round Robin matches for a single pool.
  * Uses the circle method.
  */
-export function generateRoundRobinMatches(pool) {
+export function generateRoundRobinMatches(pool, scoringMode = "traditional", winScore = 11, format = "bo1") {
   const teams = [...pool.teams];
   if (teams.length < 2) return [];
 
@@ -107,7 +107,10 @@ export function generateRoundRobinMatches(pool) {
           winnerId: null,
           status: 'scheduled',
           court: '',
-          time: null
+          time: null,
+          scoringMode,
+          winScore,
+          format
         });
       }
     }
@@ -124,7 +127,7 @@ export function generateRoundRobinMatches(pool) {
  * High-level function to take a list of teams and desired pools,
  * and return the generated Pools and Matches.
  */
-export function createPoolsAndMatches(teams, desiredNumPools) {
+export function createPoolsAndMatches(teams, desiredNumPools, scoringMode = "traditional", winScore = 11, format = "bo1") {
   const numPools = Math.min(desiredNumPools, Math.floor(teams.length / 2));
   if (numPools < 1) return { pools: [], matches: [] };
 
@@ -132,7 +135,7 @@ export function createPoolsAndMatches(teams, desiredNumPools) {
   let allMatches = [];
 
   for (const pool of pools) {
-    const poolMatches = generateRoundRobinMatches(pool);
+    const poolMatches = generateRoundRobinMatches(pool, scoringMode, winScore, format);
     allMatches = [...allMatches, ...poolMatches];
     
     // Clean up temporary full team objects

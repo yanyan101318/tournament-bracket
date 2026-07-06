@@ -37,6 +37,10 @@ export default function BracketsTab({ tournamentId, divisions }) {
 
   const [showGenerateModal, setShowGenerateModal] = useState(false);
   const [advanceCount, setAdvanceCount] = useState(2);
+  const [bracketType, setBracketType] = useState("single-elimination");
+  const [scoringMode, setScoringMode] = useState("traditional");
+  const [winScore, setWinScore] = useState(11);
+  const [format, setFormat] = useState("bo1");
 
   async function executeGenerateBracket() {
     setShowGenerateModal(false);
@@ -75,7 +79,7 @@ export default function BracketsTab({ tournamentId, divisions }) {
     }
 
     try {
-      const bracketMatches = generateMedalBracket(advancingTeams, activeDiv);
+      const bracketMatches = generateMedalBracket(advancingTeams, activeDiv, bracketType, scoringMode, winScore, format);
       const batch = writeBatch(db);
       
       existingMedal.forEach(m => {
@@ -379,6 +383,53 @@ export default function BracketsTab({ tournamentId, divisions }) {
                   <option value={4}>Top 4</option>
                 </select>
               </label>
+
+              <label className="block">
+                <span className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2 block">Bracket Type</span>
+                <select 
+                  className="w-full bg-slate-900 border border-slate-700 rounded-lg p-3 text-white outline-none focus:border-purple-500 transition-colors"
+                  value={bracketType}
+                  onChange={(e) => setBracketType(e.target.value)}
+                >
+                  <option value="single-elimination">Single Elimination</option>
+                  <option value="double-elimination">Double Elimination</option>
+                </select>
+              </label>
+
+              <div className="grid grid-cols-2 gap-4">
+                <label className="block">
+                  <span className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2 block">Scoring Mode</span>
+                  <select 
+                    className="w-full bg-slate-900 border border-slate-700 rounded-lg p-3 text-white outline-none focus:border-purple-500 transition-colors"
+                    value={scoringMode}
+                    onChange={(e) => setScoringMode(e.target.value)}
+                  >
+                    <option value="traditional">Traditional</option>
+                    <option value="rally">Rally</option>
+                  </select>
+                </label>
+                <label className="block">
+                  <span className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2 block">Win Score</span>
+                  <input 
+                    type="number" min="1" max="99"
+                    className="w-full bg-slate-900 border border-slate-700 rounded-lg p-3 text-white outline-none focus:border-purple-500 transition-colors"
+                    value={winScore}
+                    onChange={(e) => setWinScore(Number(e.target.value))}
+                  />
+                </label>
+                <label className="block col-span-2">
+                  <span className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2 block">Match Format</span>
+                  <select 
+                    className="w-full bg-slate-900 border border-slate-700 rounded-lg p-3 text-white outline-none focus:border-purple-500 transition-colors"
+                    value={format}
+                    onChange={(e) => setFormat(e.target.value)}
+                  >
+                    <option value="bo1">Single Game</option>
+                    <option value="bo3">Best of 3</option>
+                    <option value="bo5">Best of 5</option>
+                  </select>
+                </label>
+              </div>
 
               <div className="bg-amber-900/20 border border-amber-900/50 rounded-lg p-3">
                 <p className="text-[11px] text-amber-500/80 leading-relaxed font-semibold">

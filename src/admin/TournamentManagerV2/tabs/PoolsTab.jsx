@@ -15,6 +15,9 @@ export default function PoolsTab({ tournamentId, divisions, teams }) {
 
   // Pool gen settings
   const [numPools, setNumPools] = useState(2);
+  const [scoringMode, setScoringMode] = useState("traditional");
+  const [winScore, setWinScore] = useState(11);
+  const [format, setFormat] = useState("bo1");
 
   // QR Modal State
   const [qrModalMatch, setQrModalMatch] = useState(null);
@@ -42,7 +45,7 @@ export default function PoolsTab({ tournamentId, divisions, teams }) {
     if (divTeams.length < 2) return toast.error("Not enough teams to generate matches");
     setLoading(true);
     try {
-      const { pools: newPools, matches: newMatches } = createPoolsAndMatches(divTeams, numPools);
+      const { pools: newPools, matches: newMatches } = createPoolsAndMatches(divTeams, numPools, scoringMode, winScore, format);
       await savePools(tournamentId, activeDiv, newPools, newMatches);
       toast.success("Matches generated successfully");
     } catch (e) {
@@ -133,9 +136,30 @@ export default function PoolsTab({ tournamentId, divisions, teams }) {
           <p className="text-sm text-slate-400 mb-4">
             Distribute registered teams into initial brackets and schedule round-robin matches.
           </p>
-          <div className="af-group mb-4">
-            <label className="af-label">Number of Brackets</label>
-            <input className="af-input" type="number" min="1" max="16" value={numPools} onChange={(e) => setNumPools(Number(e.target.value))} />
+          <div className="grid grid-cols-2 gap-4 mb-4">
+            <div className="af-group">
+              <label className="af-label">Number of Brackets</label>
+              <input className="af-input" type="number" min="1" max="16" value={numPools} onChange={(e) => setNumPools(Number(e.target.value))} />
+            </div>
+            <div className="af-group">
+              <label className="af-label">Scoring Mode</label>
+              <select className="af-input bg-slate-900 border border-slate-700 text-white rounded p-2 text-sm" value={scoringMode} onChange={e => setScoringMode(e.target.value)}>
+                <option value="traditional">Traditional</option>
+                <option value="rally">Rally</option>
+              </select>
+            </div>
+            <div className="af-group">
+              <label className="af-label">Win Score</label>
+              <input className="af-input" type="number" min="1" max="99" value={winScore} onChange={(e) => setWinScore(Number(e.target.value))} />
+            </div>
+            <div className="af-group">
+              <label className="af-label">Match Format</label>
+              <select className="af-input bg-slate-900 border border-slate-700 text-white rounded p-2 text-sm" value={format} onChange={e => setFormat(e.target.value)}>
+                <option value="bo1">Single Game</option>
+                <option value="bo3">Best of 3</option>
+                <option value="bo5">Best of 5</option>
+              </select>
+            </div>
           </div>
           <button
             className="ad-btn bg-amber-500 text-slate-900 w-full hover:bg-amber-400 font-bold"

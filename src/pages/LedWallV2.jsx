@@ -82,20 +82,20 @@ export default function LedWallV2() {
         </h1>
         <div className="flex gap-2">
           {focusedCourt && (
-            <button 
+            <button
               onClick={() => setFocusedCourt(null)}
               className="text-white px-3 py-1 rounded bg-[#CCFF00]/20 border border-[#CCFF00] text-xs font-bold transition-colors"
             >
               Back to All Courts
             </button>
           )}
-          <button 
+          <button
             onClick={() => navigate(`/tournament-v2/${id}`)}
             className="text-[#CCFF00] hover:text-black px-3 py-1 rounded bg-[#CCFF00]/10 border border-[#CCFF00] hover:bg-[#CCFF00] text-xs font-bold transition-colors"
           >
             Bracket View
           </button>
-          <button 
+          <button
             onClick={() => navigate(`/admin/tournament-v2?id=${id}`)}
             className="text-slate-500 hover:text-white px-3 py-1 rounded bg-slate-900 border border-slate-700 text-xs font-bold transition-colors"
           >
@@ -108,11 +108,13 @@ export default function LedWallV2() {
         {displayedCourts.map((court, index) => {
           const activeMatch = getActiveMatch(court.id);
           const nextMatch = getNextMatch(court.id, activeMatch?.id);
-          const theme = neonColors[index % neonColors.length];
-          
+          const originalIndex = systemCourts.findIndex(c => c.id === court.id);
+          const themeIndex = originalIndex >= 0 ? originalIndex : index;
+          const theme = neonColors[themeIndex % neonColors.length];
+
           let t1Names = { p1: "TBD", p2: "" };
           let t2Names = { p1: "TBD", p2: "" };
-          
+
           if (activeMatch) {
             if (activeMatch.team1Id === 'bye') {
               t1Names = { p1: "BYE", p2: "" };
@@ -121,7 +123,7 @@ export default function LedWallV2() {
               if (team1) t1Names = formatPlayerNames(team1);
               else t1Names = { p1: activeMatch.team1Name || "TBD", p2: "" };
             }
-            
+
             if (activeMatch.team2Id === 'bye') {
               t2Names = { p1: "BYE", p2: "" };
             } else if (activeMatch.team2Id) {
@@ -141,7 +143,7 @@ export default function LedWallV2() {
             else n1 = { p1: nextMatch.team1Name || "TBD", p2: "" };
             if (nt2) n2 = formatPlayerNames(nt2);
             else n2 = { p1: nextMatch.team2Name || "TBD", p2: "" };
-            
+
             const n1Str = n1.p2 ? `${n1.p1} & ${n1.p2}` : n1.p1;
             const n2Str = n2.p2 ? `${n2.p1} & ${n2.p2}` : n2.p1;
             nextNames = `${n1Str} vs ${n2Str}`;
@@ -162,15 +164,15 @@ export default function LedWallV2() {
           }
 
           return (
-            <div 
-              key={court.id} 
+            <div
+              key={court.id}
               onClick={() => {
                 if (!focusedCourt) setFocusedCourt(court.id);
               }}
               className={`rounded-3xl border-2 flex flex-col overflow-hidden relative shadow-2xl transition-all duration-500 ${hasMatch ? '' : 'bg-black/50 border-slate-900'} ${!focusedCourt ? 'cursor-pointer' : ''}`}
               style={hasMatch ? { backgroundColor: theme.bgOuter, borderColor: theme.color, boxShadow: `0 0 20px ${theme.glow}` } : {}}
             >
-              
+
               <div className={`py-3 text-center border-b-2 flex flex-col justify-center items-center ${hasMatch ? '' : 'bg-slate-900 border-slate-900'}`} style={hasMatch ? { backgroundColor: theme.bgInner, borderColor: theme.color } : {}}>
                 <h2 className={`text-4xl ${focusedCourt ? 'text-6xl' : ''} font-black tracking-[0.2em] uppercase m-0 leading-none transition-all ${!hasMatch ? 'text-slate-600' : ''}`} style={hasMatch ? { color: theme.color } : {}}>
                   {court.name}
@@ -196,13 +198,27 @@ export default function LedWallV2() {
 
                     {/* SCORE */}
                     <div className={`flex flex-col items-center justify-center shrink-0 ${focusedCourt ? 'w-[20%]' : 'w-[36%]'}`}>
-                      <div className="flex items-center justify-center gap-4 w-full">
-                        <div className={`font-black flex-1 text-right ${focusedCourt ? 'text-[12rem]' : 'text-7xl xl:text-8xl'}`} style={{ color: theme.color, filter: `drop-shadow(0 0 15px ${theme.glow})` }}>
-                          {activeMatch.score1 || 0}
+                      <div className="flex items-start justify-center gap-4 w-full">
+                        <div className="flex-1 flex flex-col items-end">
+                          <div className={`font-black ${focusedCourt ? 'text-[12rem]' : 'text-7xl xl:text-8xl'} leading-none`} style={{ color: theme.color, filter: `drop-shadow(0 0 15px ${theme.glow})` }}>
+                            {activeMatch.score1 || 0}
+                          </div>
+                          {activeMatch.currentGame?.servingTeam === "A" && activeMatch.status !== "completed" && (
+                            <span className={`text-[#CCFF00] font-black tracking-widest ${focusedCourt ? 'text-2xl' : 'text-[10px]'} mt-2 uppercase`} style={{ filter: 'drop-shadow(0 0 5px rgba(204,255,0,0.5))' }}>
+                              🎾 SERVING {activeMatch.scoringMode === 'rally' ? (activeMatch.currentGame?.servingSide === 'right' ? '[R]' : '[L]') : (activeMatch.currentGame?.firstServer ? '[1st]' : '[2nd]')}
+                            </span>
+                          )}
                         </div>
-                        <div className={`text-slate-500 font-black shrink-0 ${focusedCourt ? 'text-8xl' : 'text-5xl'}`}>-</div>
-                        <div className={`font-black flex-1 text-left ${focusedCourt ? 'text-[12rem]' : 'text-7xl xl:text-8xl'}`} style={{ color: theme.color, filter: `drop-shadow(0 0 15px ${theme.glow})` }}>
-                          {activeMatch.score2 || 0}
+                        <div className={`text-slate-500 font-black shrink-0 ${focusedCourt ? 'text-8xl mt-12' : 'text-5xl mt-3'}`}>-</div>
+                        <div className="flex-1 flex flex-col items-start">
+                          <div className={`font-black ${focusedCourt ? 'text-[12rem]' : 'text-7xl xl:text-8xl'} leading-none`} style={{ color: theme.color, filter: `drop-shadow(0 0 15px ${theme.glow})` }}>
+                            {activeMatch.score2 || 0}
+                          </div>
+                          {activeMatch.currentGame?.servingTeam === "B" && activeMatch.status !== "completed" && (
+                            <span className={`text-[#CCFF00] font-black tracking-widest ${focusedCourt ? 'text-2xl' : 'text-[10px]'} mt-2 uppercase`} style={{ filter: 'drop-shadow(0 0 5px rgba(204,255,0,0.5))' }}>
+                              🎾 SERVING {activeMatch.scoringMode === 'rally' ? (activeMatch.currentGame?.servingSide === 'right' ? '[R]' : '[L]') : (activeMatch.currentGame?.firstServer ? '[1st]' : '[2nd]')}
+                            </span>
+                          )}
                         </div>
                       </div>
                       <div className={`mt-2 font-black text-slate-400 tracking-[0.3em] uppercase ${focusedCourt ? 'text-2xl mt-6' : 'text-sm'}`}>
@@ -233,7 +249,7 @@ export default function LedWallV2() {
                   <span className="text-5xl font-black text-slate-800 tracking-widest uppercase">NO MATCH</span>
                 </div>
               )}
-              
+
             </div>
           );
         })}
