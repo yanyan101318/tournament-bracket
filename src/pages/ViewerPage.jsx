@@ -3,8 +3,6 @@ import { useState, useEffect } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
 import { subscribeToMatches, subscribeToTournamentInfo } from "../services/tournamentService";
 
-const ROUND_LABELS = ["Round 1","Quarterfinals","Semifinals","Final","Grand Final"];
-
 function PickleballSVG({ size=40 }) {
   return (
     <svg viewBox="0 0 40 40" fill="none" width={size} height={size}>
@@ -17,38 +15,9 @@ function PickleballSVG({ size=40 }) {
   );
 }
 
-function getSizeClass(count) {
-  if (count <= 4)  return "vc-xl";
-  if (count <= 8)  return "vc-lg";
-  if (count <= 16) return "vc-md";
-  if (count <= 32) return "vc-sm";
-  return "vc-xs";
-}
 
-function getMaxCols(matchCount, sizeClass) {
-  if (sizeClass === "vc-xl") return 2;
-  if (sizeClass === "vc-lg") return 3;
-  if (sizeClass === "vc-md") return 4;
-  return Math.min(matchCount, 6);
-}
 
-function getRoundLabel(i, total) {
-  return i < ROUND_LABELS.length ? ROUND_LABELS[i] : `Round ${i+1}`;
-}
 
-function buildRounds(matchMap) {
-  const matches = Object.values(matchMap);
-  if (!matches.length) return [];
-  const maxRound = Math.max(...matches.map(m=>m.round||1));
-  const rounds = [];
-  for (let r=1; r<=maxRound; r++) {
-    const rm = matches.filter(m=>m.round===r).sort((a,b)=>
-      parseInt(a.matchId.split("-M")[1]) - parseInt(b.matchId.split("-M")[1])
-    );
-    if (rm.length) rounds.push(rm);
-  }
-  return rounds;
-}
 
 function matchDisplayPriority(m) {
   if (m.winner) return 50;
@@ -168,14 +137,7 @@ export default function ViewerPage() {
     <div className="vp2-loading"><div className="vp2-loading-text">Tournament not found.</div></div>
   );
 
-  const rounds       = buildRounds(matchMap);
   const allMatches   = Object.values(matchMap);
-  const totalMatches = allMatches.length;
-  const doneMatches  = allMatches.filter(m=>m.winner).length;
-  const liveMatches  = allMatches.filter(m=>!m.winner&&(m.sets||[]).length>0);
-  const progressPct  = totalMatches>0 ? Math.round((doneMatches/totalMatches)*100) : 0;
-  const sizeClass    = getSizeClass(totalMatches);
-  const timeStr      = new Date().toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"});
 
   const courtGrid = buildCourtGrid(allMatches);
   

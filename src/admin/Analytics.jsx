@@ -1,6 +1,6 @@
 // src/admin/Analytics.jsx
 import { useState, useEffect, useMemo } from "react";
-import { collection, getDocs, query, where } from "firebase/firestore";
+import { collection, getDocs } from "firebase/firestore";
 import { format, isSameDay, isSameWeek, isSameMonth, isSameYear, startOfDay, endOfDay, parseISO, isWithinInterval } from "date-fns";
 import { db } from "../firebase";
 import { Download, Loader2, CheckCircle, AlertCircle, Filter } from "lucide-react";

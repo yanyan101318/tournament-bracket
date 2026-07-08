@@ -13,7 +13,7 @@ export default function BracketsTab({ tournamentId, divisions }) {
   const [activeDiv, setActiveDiv] = useState(divisions[0]?.id || null);
   const [matches, setMatches] = useState([]);
   const [pools, setPools] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [, setLoading] = useState(true);
 
   // QR Modal State
   const [qrModalMatch, setQrModalMatch] = useState(null);

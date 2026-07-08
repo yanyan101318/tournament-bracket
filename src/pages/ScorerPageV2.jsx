@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import { useParams } from "react-router-dom";
 import { doc, onSnapshot } from "firebase/firestore";
 import { db } from "../firebase";
@@ -410,7 +410,7 @@ export default function ScorerPageV2() {
         </div>
         
         <div className="sp-undo-row" style={{ marginTop: '2rem' }}>
-          <button className="sp-undo-btn" onClick={handleCompleteMatch} disabled={saving} style={{ padding: '12px 24px', fontSize: '1.2rem', color: '#fff', background: winner !== null ? 'var(--pickle)' : 'transparent', borderColor: 'var(--pickle)', color: winner !== null ? '#000' : '#fff', transition: 'all 0.3s' }}>
+          <button className="sp-undo-btn" onClick={handleCompleteMatch} disabled={saving} style={{ padding: '12px 24px', fontSize: '1.2rem', background: winner !== null ? 'var(--pickle)' : 'transparent', borderColor: 'var(--pickle)', color: winner !== null ? '#000' : '#fff', transition: 'all 0.3s' }}>
             {winner !== null ? "CONFIRM WINNER & FINISH" : "FINISH MATCH"}
           </button>
         </div>

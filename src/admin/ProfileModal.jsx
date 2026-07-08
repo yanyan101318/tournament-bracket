@@ -25,7 +25,7 @@ export default function ProfileModal({ onClose }) {
   const [selectedAvatar, setSelectedAvatar] = useState(profile?.avatar || DEFAULT_AVATAR);
   
   // Temporary selected file if they upload
-  const [uploadedBase64, setUploadedBase64] = useState(null);
+  const [, setUploadedBase64] = useState(null);
 
   const handleFileChange = (e) => {
     const file = e.target.files[0];

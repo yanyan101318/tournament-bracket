@@ -111,10 +111,7 @@ export default function ScorerPage() {
     setTimeout(() => setToast(null), 2500);
   }
 
-  function cloneCurrentGame(cg) {
-    if (!cg) return null;
-    return { ...cg };
-  }
+
 
   async function handleUndoPointA() {
     if (!match || match.winner || saving || localA === 0) return;

@@ -65,10 +65,7 @@ export default function ScoreModal({
   const [showCourtChangePopup, setShowCourtChangePopup] = useState(false);
   const crossedElevenRef = useRef(false);
 
-  function cloneCurrentGame(cg) {
-    if (!cg) return null;
-    return { ...cg };
-  }
+
 
   useEffect(() => {
     const saved = getStoredScore(matchId);
@@ -121,7 +118,7 @@ export default function ScoreModal({
         setAutoGameEnded(false);
       }, 500);
     }
-  }, [localA, localB, autoGameEnded, match, onSetWin, matchId, scoringMode]);
+  }, [localA, localB, autoGameEnded, match, onSetWin, matchId, scoringMode, winScore]);
 
   function triggerFlash(side, type) {
     if (side === "A") { setFlashA(type); setTimeout(() => setFlashA(null), 300); }

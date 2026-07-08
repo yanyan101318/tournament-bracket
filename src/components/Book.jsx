@@ -24,7 +24,7 @@ import {
 import toast from "react-hot-toast";
 import { format, addDays } from "date-fns";
 import { roundMoney, parseCashAmount, parseAmountPaid } from "../lib/bookingMoney";
-import { TIME_SLOTS, isSlotStartAvailableForDuration, calculateEndTime, isSlotWithinCourtHours, getEffectiveCourtStatus, isSlotDuringOpenPlay, isCourtActiveDuringSlot } from "../lib/bookingSlots";
+import { TIME_SLOTS, isSlotStartAvailableForDuration, calculateEndTime, isSlotWithinCourtHours, getEffectiveCourtStatus, isCourtActiveDuringSlot } from "../lib/bookingSlots";
 import {
   PLAN_FULL,
   PLAN_PARTIAL,

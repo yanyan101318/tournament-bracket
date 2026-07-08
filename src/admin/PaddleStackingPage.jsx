@@ -21,7 +21,7 @@ import {
 import { db } from "../firebase";
 import { useOfflineSync } from "../hooks/useOfflineSync";
 import toast from "react-hot-toast";
-import { format, parse, isValid } from "date-fns";
+import { format } from "date-fns";
 import { getEffectiveCourtStatus } from "../lib/bookingSlots";
 
 
@@ -52,11 +52,7 @@ function courtClearedForAvailable(c) {
   };
 }
 
-const STACK_MODES = [
-  { id: "mix", label: "Mix" },
-  { id: "random", label: "Random" },
-  { id: "group", label: "Group" },
-];
+
 
 const CATEGORY_OPTIONS = [
   { id: "male", label: "Male" },
@@ -242,53 +238,13 @@ function nextSuggestionLabels(queueArr, assignMode) {
   );
 }
 
-/** Parse booking date + timeSlot + duration into [start, end) in local time. */
-function parseBookingTimeRange(booking) {
-  const dateStr = booking?.date;
-  const slot = booking?.timeSlot;
-  if (!dateStr || !slot || typeof slot !== "string") return null;
-  const durationH = Number(booking.duration);
-  const durHours = Number.isFinite(durationH) && durationH > 0 ? durationH : 1;
-  const combined = `${String(dateStr).trim()} ${slot.trim()}`;
-  let start = parse(combined, "yyyy-MM-dd hh:mm a", new Date());
-  if (!isValid(start)) {
-    start = parse(combined, "yyyy-MM-dd h:mm a", new Date());
-  }
-  if (!isValid(start)) return null;
-  const end = new Date(start.getTime() + durHours * 60 * 60 * 1000);
-  return { start, end };
-}
 
-function bookingOverlapsNow(booking, now) {
-  if (booking?.status !== "Approved") return false;
-  const range = parseBookingTimeRange(booking);
-  if (!range) return false;
-  return now >= range.start && now < range.end;
-}
-
-/** Facility court IDs with an approved booking that covers `now` */
-function blockedFacilityIdsFromBookings(bookings, now, facilityCourts) {
-  const ids = new Set();
-  const nameToId = new Map(
-    (facilityCourts || []).map((fc) => [normName(fc.name || ""), fc.id])
-  );
-  for (const b of bookings || []) {
-    if (!bookingOverlapsNow(b, now)) continue;
-    if (b.courtId && facilityCourts.some((fc) => fc.id === b.courtId)) {
-      ids.add(b.courtId);
-      continue;
-    }
-    const id = nameToId.get(normName(b.courtName || ""));
-    if (id) ids.add(id);
-  }
-  return ids;
-}
 
 function mergePaddleCourtsFromFacility(facilityCourts, bookings, now, existingCourts, allowedCourtIds) {
   const sorted = [...(facilityCourts || [])].sort((a, b) =>
     (a.name || "").localeCompare(b.name || "", undefined, { sensitivity: "base" })
   );
-  const blocked = blockedFacilityIdsFromBookings(bookings, now, sorted);
+
   const prevByFc = new Map(
     (existingCourts || []).filter((c) => c.facilityCourtId).map((c) => [c.facilityCourtId, c])
   );
@@ -387,8 +343,7 @@ export default function PaddleStackingPage() {
   const [bookingsReady, setBookingsReady] = useState(false);
   const [facilityCourtsReady, setFacilityCourtsReady] = useState(false);
   const [tickNow, setTickNow] = useState(() => Date.now());
-  const [assignMode, setAssignMode] = useState(searchParams.get("assignMode") || "doubles");
-  const [groupNames, setGroupNames] = useState(["", "", "", ""]);
+  const [assignMode] = useState(searchParams.get("assignMode") || "doubles");
   
   const [finishingMatchId, setFinishingMatchId] = useState(null);
   const [scoreA, setScoreA] = useState("");
@@ -489,25 +444,14 @@ export default function PaddleStackingPage() {
 
   const queue = useMemo(() => state?.queue || [], [state]);
   const courts = useMemo(() => state?.courts || [], [state]);
-  const stackMode = state?.stackMode || "mix";
+
 
   const mergedCourts = useMemo(
     () => mergePaddleCourtsFromFacility(facilityCourts, bookings, new Date(tickNow), courts, allowedCourtIds),
     [facilityCourts, bookings, tickNow, courts, allowedCourtIds]
   );
 
-  const nowForBookings = useMemo(() => new Date(tickNow), [tickNow]);
-  const openFacilityCourts = useMemo(() => {
-    const blocked = blockedFacilityIdsFromBookings(bookings, nowForBookings, facilityCourts);
-    return [...(facilityCourts || [])]
-      .filter((fc) => {
-        if (getEffectiveCourtStatus(fc) !== false) return false;
-        if (blocked.has(fc.id)) return false;
-        if (allowedCourtIds && !allowedCourtIds.has(fc.id)) return false;
-        return true;
-      })
-      .sort((a, b) => (a.name || "").localeCompare(b.name || "", undefined, { sensitivity: "base" }));
-  }, [facilityCourts, bookings, nowForBookings, allowedCourtIds]);
+
 
   const filteredQueue = useMemo(() => {
     const q = queueSearch.trim().toLowerCase();
@@ -575,9 +519,7 @@ export default function PaddleStackingPage() {
     persistState({ courts: mergedCourts });
   }, [loading, state, facilityCourtsReady, bookingsReady, mergedCourts, courts, persistState]);
 
-  async function setStackMode(mode) {
-    await persistState({ stackMode: mode });
-  }
+
 
   async function addPlayer(e) {
     e.preventDefault();
@@ -609,38 +551,7 @@ export default function PaddleStackingPage() {
     setAddPlayerGender("");
   }
 
-  async function addGroupSubmit(e) {
-    e.preventDefault();
-    const names = groupNames.map((n) => (n || "").trim()).filter(Boolean);
-    if (names.length !== 4) {
-      toast.error("Enter exactly four player names");
-      return;
-    }
-    const uniq = new Set(names.map(normName));
-    if (uniq.size !== 4) {
-      toast.error("All four names must be different");
-      return;
-    }
-    const namesSet = allQueuedNormNames(queue);
-    for (const n of names) {
-      if (namesSet.has(normName(n))) {
-        toast.error(`“${n}” is already in the queue`);
-        return;
-      }
-    }
-    const entry = {
-      id: newId(),
-      kind: "group",
-      members: names,
-      addedAt: Timestamp.now(),
-    };
-    await wrapSync(persistState({ queue: [...queue, entry] }), {
-      successMsg: "Group added to queue",
-      offlineMsg: "Group Queued Offline — Will Sync Automatically",
-      errorMsg: "Could not add group"
-    });
-    setGroupNames(["", "", "", ""]);
-  }
+
 
   async function removeFromQueue(entryId) {
     await persistState({ queue: queue.filter((x) => x.id !== entryId) });
@@ -930,7 +841,7 @@ export default function PaddleStackingPage() {
         setAssignCourtId(avail[0].id);
       }
     }
-  }, [courts, assignCourtId]);
+  }, [courts, assignCourtId, searchParams]);
 
   if (loading || !state) {
     return (

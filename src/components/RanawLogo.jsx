@@ -1,4 +1,4 @@
-import { BRAND_NAME } from "../lib/brand";
+
 
 const VARIANTS = {
   nav: "h-12 sm:h-14 w-auto max-w-[200px] sm:max-w-[260px] object-contain",
