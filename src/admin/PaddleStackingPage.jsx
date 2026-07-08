@@ -1,6 +1,6 @@
 // src/admin/PaddleStackingPage.jsx — admin-only paddle queue & court rotation
 import { useState, useEffect, useMemo, useCallback } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import {
   doc,
   getDoc,
@@ -10,17 +10,20 @@ import {
   collection,
   addDoc,
   query,
+  where,
   orderBy,
   limit,
   serverTimestamp,
   Timestamp,
+  writeBatch,
+  increment,
 } from "firebase/firestore";
 import { db } from "../firebase";
 import { useOfflineSync } from "../hooks/useOfflineSync";
 import toast from "react-hot-toast";
 import { format, parse, isValid } from "date-fns";
+import { getEffectiveCourtStatus } from "../lib/bookingSlots";
 
-const STATE_DOC = doc(db, "paddleStack", "state");
 
 /** Firestore rejects `undefined` anywhere in the payload — strip it recursively. */
 function omitUndefinedDeep(value) {
@@ -81,84 +84,12 @@ function isCategorizedPlayer(e) {
   return c != null && s != null;
 }
 
-function isMixPlayer(e) {
-  if (isGroupEntry(e)) return false;
-  return !isCategorizedPlayer(e);
-}
 
-function categorySkillMatch(e, cat, skill) {
-  if (isGroupEntry(e)) return false;
-  return normalizeCategory(e?.category) === cat && normalizeSkillLevel(e?.skillLevel) === skill;
-}
-
-/** Doubles: queue[0] is categorized — next 4 in list order with same category+skill (groups skipped). */
-function peekCategorizedDoublesFromTop(q) {
-  const cat = normalizeCategory(q[0].category);
-  const skill = normalizeSkillLevel(q[0].skillLevel);
-  const units = [];
-  for (let j = 0; j < q.length && units.length < 4; j++) {
-    const e = q[j];
-    if (isGroupEntry(e)) continue;
-    if (categorySkillMatch(e, cat, skill)) units.push(e);
-  }
-  if (units.length < 4) {
-    return { ok: false, reason: "not_enough_categorized_doubles", units: [], playerSlots: [] };
-  }
-  const playerSlots = units.map((t) => playerSlotFromQueueEntry(t));
-  return { ok: true, reason: null, units, playerSlots };
-}
-
-/** Doubles: queue[0] is mix — next 4 mix players in FIFO order (groups & categorized rows skipped). */
-function peekMixDoubles(q) {
-  const units = [];
-  for (let j = 0; j < q.length && units.length < 4; j++) {
-    const e = q[j];
-    if (isGroupEntry(e)) continue;
-    if (isMixPlayer(e)) units.push(e);
-  }
-  if (units.length < 4) {
-    return { ok: false, reason: "not_enough_mix_doubles", units: [], playerSlots: [] };
-  }
-  const playerSlots = units.map((t) => playerSlotFromQueueEntry(t));
-  return { ok: true, reason: null, units, playerSlots };
-}
-
-function peekNextSingles(q) {
-  const head = q[0];
-  if (isGroupEntry(head)) {
-    return { ok: false, reason: "group_blocks_singles", units: [], playerSlots: [] };
-  }
-  if (isCategorizedPlayer(head)) {
-    const cat = normalizeCategory(head.category);
-    const skill = normalizeSkillLevel(head.skillLevel);
-    const units = [head];
-    for (let j = 1; j < q.length; j++) {
-      const e = q[j];
-      if (isGroupEntry(e)) continue;
-      if (categorySkillMatch(e, cat, skill)) {
-        units.push(e);
-        const playerSlots = units.map((t) => playerSlotFromQueueEntry(t));
-        return { ok: true, reason: null, units, playerSlots };
-      }
-    }
-    return { ok: false, reason: "need_matching_singles", units: [], playerSlots: [] };
-  }
-  const units = [head];
-  for (let j = 1; j < q.length; j++) {
-    const e = q[j];
-    if (isGroupEntry(e)) continue;
-    if (isMixPlayer(e)) {
-      units.push(e);
-      const playerSlots = units.map((t) => playerSlotFromQueueEntry(t));
-      return { ok: true, reason: null, units, playerSlots };
-    }
-  }
-  return { ok: false, reason: "need_two_mix_singles", units: [], playerSlots: [] };
-}
 
 const SKILL_OPTIONS = [
-  { id: "high", label: "High Level" },
-  { id: "low", label: "Low Level" },
+  { id: "intermediate", label: "Intermediate" },
+  { id: "novice", label: "Novice" },
+  { id: "beginner", label: "Beginner" },
 ];
 
 /** Slot stored on court + in match history; includes category/skill when present. */
@@ -227,12 +158,45 @@ function formatQueueEntryLabel(e) {
     const m = (e.members || []).filter(Boolean);
     return m.length ? `Group · ${m.join(" · ")}` : "Group";
   }
-  return e.name || "—";
+  let label = e.name || "—";
+  if (e.hasPaid === true) label += " ✓";
+  else if (e.hasPaid === false) label += " ✗";
+  return label;
 }
 
 function entrySearchText(e) {
   if (isGroupEntry(e)) return (e.members || []).join(" ");
   return e?.name || "";
+}
+
+/** Split court slots into Team 1 / Team 2 player names (handles singles, doubles, groups). */
+function teamsFromCourt(court) {
+  const slots = court?.playerSlots || [];
+  if (slots.length === 1 && slots[0].members?.length) {
+    const m = slots[0].members;
+    return {
+      teamA: [m[0], m[1]].filter(Boolean),
+      teamB: [m[2], m[3]].filter(Boolean),
+    };
+  }
+  if (court?.gameType === "singles") {
+    return {
+      teamA: slots.slice(0, 1).map((s) => s.name).filter(Boolean),
+      teamB: slots.slice(1, 2).map((s) => s.name).filter(Boolean),
+    };
+  }
+  return {
+    teamA: slots.slice(0, 2).map((s) => s.name).filter(Boolean),
+    teamB: slots.slice(2, 4).map((s) => s.name).filter(Boolean),
+  };
+}
+
+function teamDisplayLabel(names) {
+  return names.length ? names.join(" & ") : "Team";
+}
+
+function playerStatsDocId(sessionId, playerName) {
+  return `${sessionId}__${(playerName || "").trim().toUpperCase()}`;
 }
 
 /**
@@ -243,35 +207,38 @@ function peekNextAssignment(queueArr, assignMode) {
   const q = queueArr || [];
   if (!q.length) return { ok: false, reason: "empty", units: [], playerSlots: [] };
 
-  if (assignMode === "singles") {
-    return peekNextSingles(q);
-  }
-
   const head = q[0];
   if (isGroupEntry(head)) {
+    if (assignMode === "singles") {
+      return { ok: false, reason: "group_blocks_singles", units: [], playerSlots: [] };
+    }
     const playerSlots = [playerSlotFromQueueEntry(head)];
     return { ok: true, reason: null, units: [head], playerSlots };
   }
-  if (isCategorizedPlayer(head)) {
-    return peekCategorizedDoublesFromTop(q);
+
+  const target = assignMode === "singles" ? 2 : 4;
+  const units = [];
+  for (let j = 0; j < q.length && units.length < target; j++) {
+    const e = q[j];
+    if (isGroupEntry(e)) continue; // skip group to find individuals
+    units.push(e);
   }
-  return peekMixDoubles(q);
+  if (units.length < target) {
+    return { ok: false, reason: "not_enough_players", units: [], playerSlots: [] };
+  }
+  const playerSlots = units.map((t) => playerSlotFromQueueEntry(t));
+  return { ok: true, reason: null, units, playerSlots };
 }
 
 function nextSuggestionLabels(queueArr, assignMode) {
   const peek = peekNextAssignment(queueArr, assignMode);
   if (!peek.ok) {
     if (peek.reason === "group_blocks_singles") return ["(Group next — use Doubles or move group)"];
-    if (peek.reason === "need_matching_singles")
-      return ["(Not enough with same category & skill for singles)"];
-    if (peek.reason === "need_two_mix_singles") return ["(Need another mix player for singles — check order)"];
-    if (peek.reason === "not_enough_categorized_doubles")
-      return ["(Not enough same category & skill in queue — need 4)"];
-    if (peek.reason === "not_enough_mix_doubles") return ["(Not enough mix players in queue — need 4)"];
-    return [];
+    if (peek.reason === "not_enough_players") return ["(Not enough players to form match)"];
+    return ["(Cannot form match)"];
   }
   return peek.playerSlots.map((p) =>
-    p.members && p.members.length ? `Group: ${p.members.join(" · ")}` : p.name
+    p.members && p.members.length ? `Group: ${p.members.join(" · ")}` : p.name || "—"
   );
 }
 
@@ -317,7 +284,7 @@ function blockedFacilityIdsFromBookings(bookings, now, facilityCourts) {
   return ids;
 }
 
-function mergePaddleCourtsFromFacility(facilityCourts, bookings, now, existingCourts) {
+function mergePaddleCourtsFromFacility(facilityCourts, bookings, now, existingCourts, allowedCourtIds) {
   const sorted = [...(facilityCourts || [])].sort((a, b) =>
     (a.name || "").localeCompare(b.name || "", undefined, { sensitivity: "base" })
   );
@@ -329,10 +296,10 @@ function mergePaddleCourtsFromFacility(facilityCourts, bookings, now, existingCo
 
   for (const fc of sorted) {
     if (!fc.id) continue;
+    if (allowedCourtIds && !allowedCourtIds.has(fc.id)) continue;
+    
     const prev = prevByFc.get(fc.id);
-    const isActive = fc.isActive !== false;
-    const hasBookingConflict = blocked.has(fc.id);
-    const paddleEligible = isActive && !hasBookingConflict;
+    const paddleEligible = getEffectiveCourtStatus(fc) === false;
 
     if (paddleEligible) {
       if (prev) {
@@ -400,17 +367,36 @@ export default function PaddleStackingPage() {
   const [loading, setLoading] = useState(true);
   const [history, setHistory] = useState([]);
   const [facilityCourts, setFacilityCourts] = useState([]);
-  const [newPlayer, setNewPlayer] = useState("");
+  const [searchParams] = useSearchParams();
+  const sessionId = searchParams.get("sessionId");
+  const stateDocId = sessionId || "state";
+  
+  const courtIdsParam = searchParams.get("courtIds") || searchParams.get("courtId") || "";
+  const allowedCourtIds = useMemo(() => {
+    return courtIdsParam ? new Set(courtIdsParam.split(",")) : null;
+  }, [courtIdsParam]);
+  
+  const initialAssignCourtId = allowedCourtIds ? Array.from(allowedCourtIds)[0] : "";
+  const [assignCourtId, setAssignCourtId] = useState(initialAssignCourtId || "");
+  
+  const [addPlayerName, setAddPlayerName] = useState("");
+  const [addPlayerSkill, setAddPlayerSkill] = useState("");
+  const [addPlayerGender, setAddPlayerGender] = useState("");
   const [queueSearch, setQueueSearch] = useState("");
-  const [assignCourtId, setAssignCourtId] = useState("");
-  const [assignMode, setAssignMode] = useState("doubles");
   const [bookings, setBookings] = useState([]);
   const [bookingsReady, setBookingsReady] = useState(false);
   const [facilityCourtsReady, setFacilityCourtsReady] = useState(false);
   const [tickNow, setTickNow] = useState(() => Date.now());
-  const [randomCategory, setRandomCategory] = useState("male");
-  const [randomSkill, setRandomSkill] = useState("high");
+  const [assignMode, setAssignMode] = useState(searchParams.get("assignMode") || "doubles");
   const [groupNames, setGroupNames] = useState(["", "", "", ""]);
+  
+  const [finishingMatchId, setFinishingMatchId] = useState(null);
+  const [scoreA, setScoreA] = useState("");
+  const [scoreB, setScoreB] = useState("");
+  const [showLeaderboard, setShowLeaderboard] = useState(false);
+  const [leaderboardRows, setLeaderboardRows] = useState([]);
+  const [leaderboardSort, setLeaderboardSort] = useState({ key: "wins", dir: "desc" });
+
   const { wrapSync } = useOfflineSync();
 
   useEffect(() => {
@@ -454,6 +440,7 @@ export default function PaddleStackingPage() {
 
   useEffect(() => {
     let mounted = true;
+    const STATE_DOC = doc(db, "paddleStack", stateDocId);
     (async () => {
       const snap = await getDoc(STATE_DOC);
       if (!snap.exists() && mounted) {
@@ -480,24 +467,47 @@ export default function PaddleStackingPage() {
       unsub();
       unsubH();
     };
-  }, []);
+  }, [stateDocId]);
+
+  useEffect(() => {
+    const statsQ = query(
+      collection(db, "paddlePlayerStats"),
+      where("sessionId", "==", stateDocId)
+    );
+    const unsub = onSnapshot(
+      statsQ,
+      (snap) => {
+        setLeaderboardRows(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+      },
+      (err) => {
+        console.error("Paddle stacking — player stats snapshot:", err);
+        setLeaderboardRows([]);
+      }
+    );
+    return () => unsub();
+  }, [stateDocId]);
 
   const queue = useMemo(() => state?.queue || [], [state]);
   const courts = useMemo(() => state?.courts || [], [state]);
   const stackMode = state?.stackMode || "mix";
 
   const mergedCourts = useMemo(
-    () => mergePaddleCourtsFromFacility(facilityCourts, bookings, new Date(tickNow), courts),
-    [facilityCourts, bookings, tickNow, courts]
+    () => mergePaddleCourtsFromFacility(facilityCourts, bookings, new Date(tickNow), courts, allowedCourtIds),
+    [facilityCourts, bookings, tickNow, courts, allowedCourtIds]
   );
 
   const nowForBookings = useMemo(() => new Date(tickNow), [tickNow]);
   const openFacilityCourts = useMemo(() => {
     const blocked = blockedFacilityIdsFromBookings(bookings, nowForBookings, facilityCourts);
     return [...(facilityCourts || [])]
-      .filter((fc) => fc.isActive !== false && !blocked.has(fc.id))
+      .filter((fc) => {
+        if (getEffectiveCourtStatus(fc) !== false) return false;
+        if (blocked.has(fc.id)) return false;
+        if (allowedCourtIds && !allowedCourtIds.has(fc.id)) return false;
+        return true;
+      })
       .sort((a, b) => (a.name || "").localeCompare(b.name || "", undefined, { sensitivity: "base" }));
-  }, [facilityCourts, bookings, nowForBookings]);
+  }, [facilityCourts, bookings, nowForBookings, allowedCourtIds]);
 
   const filteredQueue = useMemo(() => {
     const q = queueSearch.trim().toLowerCase();
@@ -515,10 +525,49 @@ export default function PaddleStackingPage() {
     return peek.ok ? new Set(peek.units.map((u) => u.id)) : new Set();
   }, [queue, assignMode]);
 
+  const sortedLeaderboard = useMemo(() => {
+    const rows = [...leaderboardRows];
+    const dir = leaderboardSort.dir === "asc" ? 1 : -1;
+    rows.sort((a, b) => {
+      if (leaderboardSort.key === "playerName") {
+        return dir * (a.playerName || "").localeCompare(b.playerName || "", undefined, { sensitivity: "base" });
+      }
+      const av = Number(a[leaderboardSort.key]) || 0;
+      const bv = Number(b[leaderboardSort.key]) || 0;
+      if (av !== bv) return dir * (av - bv);
+      return (a.playerName || "").localeCompare(b.playerName || "", undefined, { sensitivity: "base" });
+    });
+    return rows;
+  }, [leaderboardRows, leaderboardSort]);
+
+  const finishingCourt = useMemo(
+    () => (finishingMatchId ? courts.find((c) => c.id === finishingMatchId) : null),
+    [finishingMatchId, courts]
+  );
+
+  const finishingTeams = useMemo(
+    () => (finishingCourt ? teamsFromCourt(finishingCourt) : { teamA: [], teamB: [] }),
+    [finishingCourt]
+  );
+
+  function toggleLeaderboardSort(key) {
+    setLeaderboardSort((prev) =>
+      prev.key === key
+        ? { key, dir: prev.dir === "desc" ? "asc" : "desc" }
+        : { key, dir: key === "playerName" ? "asc" : "desc" }
+    );
+  }
+
+  function leaderboardSortIndicator(key) {
+    if (leaderboardSort.key !== key) return "";
+    return leaderboardSort.dir === "desc" ? " ↓" : " ↑";
+  }
+
   const persistState = useCallback(async (partial) => {
+    const STATE_DOC = doc(db, "paddleStack", stateDocId);
     const cleaned = omitUndefinedDeep(partial);
     await updateDoc(STATE_DOC, { ...cleaned, updatedAt: serverTimestamp() });
-  }, []);
+  }, [stateDocId]);
 
   useEffect(() => {
     if (loading || !state || !facilityCourtsReady || !bookingsReady) return;
@@ -532,9 +581,9 @@ export default function PaddleStackingPage() {
 
   async function addPlayer(e) {
     e.preventDefault();
-    const name = newPlayer.trim();
-    if (!name) {
-      toast.error("Enter a name");
+    const name = addPlayerName.trim();
+    if (!name || !addPlayerSkill || !addPlayerGender) {
+      toast.error("Please fill all fields");
       return;
     }
     const namesSet = allQueuedNormNames(queue);
@@ -542,22 +591,22 @@ export default function PaddleStackingPage() {
       toast.error("That name is already in the queue (or in a group)");
       return;
     }
-    const base = { id: newId(), name, addedAt: Timestamp.now() };
-    const entry =
-      stackMode === "random"
-        ? {
-            ...base,
-            kind: "individual",
-            category: randomCategory,
-            skillLevel: randomSkill,
-          }
-        : base;
+    const entry = {
+      id: newId(),
+      name,
+      addedAt: Timestamp.now(),
+      kind: "individual",
+      category: addPlayerGender,
+      skillLevel: addPlayerSkill,
+    };
     await wrapSync(persistState({ queue: [...queue, entry] }), {
-      successMsg: "Added to stack",
+      successMsg: "Added to queue",
       offlineMsg: "Player Queued Offline — Will Sync Automatically",
       errorMsg: "Could not add player"
     });
-    setNewPlayer("");
+    setAddPlayerName("");
+    setAddPlayerSkill("");
+    setAddPlayerGender("");
   }
 
   async function addGroupSubmit(e) {
@@ -661,34 +710,120 @@ export default function PaddleStackingPage() {
     });
   }
 
-  async function finishMatch(courtId) {
-    const court = courts.find((x) => x.id === courtId);
-    if (!court || court.status !== "ongoing") return;
+  async function submitMatchScore(e) {
+    e.preventDefault();
+    if (!finishingMatchId) return;
+    const court = courts.find((x) => x.id === finishingMatchId);
+    if (!court || court.status !== "ongoing") {
+      setFinishingMatchId(null);
+      return;
+    }
+    
+    const numA = Number(scoreA);
+    const numB = Number(scoreB);
+    if (isNaN(numA) || isNaN(numB) || numA < 0 || numB < 0) {
+      toast.error("Please enter valid scores.");
+      return;
+    }
+    if (numA === numB) {
+      toast.error("Scores cannot be tied — enter a final winner.");
+      return;
+    }
+
+    const { teamA, teamB } = teamsFromCourt(court);
+    if (!teamA.length || !teamB.length) {
+      toast.error("Could not determine teams for this match.");
+      return;
+    }
+
     const endedAt = Timestamp.now();
     const nextCourts = courts.map((c) =>
-      c.id === courtId ? courtClearedForAvailable(c) : c
+      c.id === finishingMatchId ? courtClearedForAvailable(c) : c
     );
+
+    const teamAWon = numA > numB;
+    const pointDiffA = numA - numB;
+    const pointDiffB = numB - numA;
+
+    try {
+      const batch = writeBatch(db);
+      for (const name of teamA) {
+        const ref = doc(db, "paddlePlayerStats", playerStatsDocId(stateDocId, name));
+        batch.set(
+          ref,
+          {
+            sessionId: stateDocId,
+            playerName: name.trim().toUpperCase(),
+            wins: increment(teamAWon ? 1 : 0),
+            losses: increment(teamAWon ? 0 : 1),
+            pointDiff: increment(pointDiffA),
+            lastUpdated: serverTimestamp(),
+          },
+          { merge: true }
+        );
+      }
+      for (const name of teamB) {
+        const ref = doc(db, "paddlePlayerStats", playerStatsDocId(stateDocId, name));
+        batch.set(
+          ref,
+          {
+            sessionId: stateDocId,
+            playerName: name.trim().toUpperCase(),
+            wins: increment(teamAWon ? 0 : 1),
+            losses: increment(teamAWon ? 1 : 0),
+            pointDiff: increment(pointDiffB),
+            lastUpdated: serverTimestamp(),
+          },
+          { merge: true }
+        );
+      }
+      await batch.commit();
+    } catch (err) {
+      console.error("Failed to update player stats", err);
+      toast.error("Could not update leaderboard stats.");
+      return;
+    }
+
     await wrapSync(persistState({ courts: nextCourts }), {
       successMsg: `${court.name} is available again`,
-      offlineMsg: "Court Status Saved Offline — Will Sync Automatically",
-      errorMsg: "Court freed — history log may have failed"
+      offlineMsg: "Court Status Saved Offline - Will Sync Automatically",
+      errorMsg: "Court freed - history log may have failed"
     });
+
     try {
       await addDoc(collection(db, "paddleMatchHistory"), {
         courtId: court.id,
         courtName: court.name,
         gameType: court.gameType,
         players: court.playerSlots || [],
+        scoreA: numA,
+        scoreB: numB,
         startedAt: court.startedAt || endedAt,
         endedAt,
         assignSource: court.assignSource || "fifo",
         randomFilter: court.randomFilter || null,
+        sessionId: stateDocId,
         createdAt: serverTimestamp(),
       });
     } catch (err) {
-      console.error(err);
-      toast.error("Court freed — history log failed (check rules).");
+      console.error("Failed to log paddle history", err);
     }
+
+    setFinishingMatchId(null);
+    setScoreA("");
+    setScoreB("");
+  }
+
+  function finishMatch(courtId) {
+    setScoreA("");
+    setScoreB("");
+    setFinishingMatchId(courtId);
+  }
+
+  function closeFinishModal() {
+    setFinishingMatchId(null);
+    setScoreA("");
+    setScoreB("");
   }
 
   async function requeueFromHistory(h) {
@@ -743,17 +878,44 @@ export default function PaddleStackingPage() {
   async function resetSession() {
     if (
       !window.confirm(
-        "Reset session? This clears the queue and frees all courts. Match history is kept."
+        "Reset session? This clears the queue, frees all courts, and resets player statistics. Match history is kept."
       )
     )
       return;
     const nextCourts = courts.map((c) => courtClearedForAvailable(c));
     await wrapSync(persistState({ queue: [], courts: nextCourts }), {
       successMsg: "Session reset",
-      offlineMsg: "Session Reset Saved Offline — Will Sync Automatically",
+      offlineMsg: "Session Reset Saved Offline - Will Sync Automatically",
       errorMsg: "Could not reset session"
     });
+    try {
+      if (leaderboardRows.length) {
+        const batch = writeBatch(db);
+        leaderboardRows.forEach((row) => {
+          batch.delete(doc(db, "paddlePlayerStats", row.id));
+        });
+        await batch.commit();
+      }
+    } catch (err) {
+      console.error("Failed to clear session player stats", err);
+    }
   }
+
+  const clearMatchHistory = async () => {
+    if (!history || history.length === 0) return;
+    if (!window.confirm("Are you sure you want to clear all recorded match history? This cannot be undone.")) return;
+    try {
+      const batch = writeBatch(db);
+      history.forEach((h) => {
+        batch.delete(doc(db, "paddleMatchHistory", h.id));
+      });
+      await batch.commit();
+      toast.success("Match history cleared!");
+    } catch (err) {
+      console.error(err);
+      toast.error("Failed to clear match history.");
+    }
+  };
 
   useEffect(() => {
     const avail = courts.filter((c) => c.status === "available");
@@ -762,7 +924,11 @@ export default function PaddleStackingPage() {
       return;
     }
     if (!assignCourtId || !avail.some((c) => c.id === assignCourtId)) {
-      setAssignCourtId(avail[0].id);
+      if (searchParams.get("courtId") && avail.some(c => c.id === searchParams.get("courtId"))) {
+        setAssignCourtId(searchParams.get("courtId"));
+      } else {
+        setAssignCourtId(avail[0].id);
+      }
     }
   }, [courts, assignCourtId]);
 
@@ -778,7 +944,9 @@ export default function PaddleStackingPage() {
     <div className="ad-page">
       <div className="ad-page-header flex flex-col lg:flex-row lg:items-end lg:justify-between gap-4">
         <div>
-          <h1 className="ad-page-title">Paddle stacking</h1>
+          <h1 className="ad-page-title">
+            Paddle stacking {sessionId && <span className="text-cyan-400 font-medium text-lg ml-2">(Session: {sessionId.substring(0,6)})</span>}
+          </h1>
           <p className="ad-page-sub">
             FIFO queue, court assignment (singles / doubles), and match log — admin only, no player portal.
           </p>
@@ -794,29 +962,16 @@ export default function PaddleStackingPage() {
           </p>
         </div>
         <div className="flex flex-wrap gap-2 items-center">
-          <div className="flex items-center gap-2 rounded-lg border border-[var(--ad-border)] bg-[var(--ad-surface)] px-2 py-1.5">
-            <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--ad-muted)] pl-1">
-              Mode
-            </span>
-            <select
-              className="af-input py-1.5 text-sm min-w-[140px] border-0 bg-transparent"
-              value={stackMode}
-              onChange={(e) => setStackMode(e.target.value)}
-              aria-label="Stacking mode"
-            >
-              {STACK_MODES.map((m) => (
-                <option key={m.id} value={m.id}>
-                  {m.label}
-                </option>
-              ))}
-            </select>
-          </div>
           <a href="/paddle-viewer" target="_blank" rel="noreferrer" className="ad-btn ad-btn-primary ad-btn-sm flex items-center gap-1">
             <span className="text-[10px] uppercase">📺 Viewer</span>
           </a>
-          <a href="/paddle-score" target="_blank" rel="noreferrer" className="ad-btn ad-btn-primary ad-btn-sm flex items-center gap-1">
-            <span className="text-[10px] uppercase">📱 Scorer</span>
-          </a>
+          <button
+            type="button"
+            className="ad-btn ad-btn-outline ad-btn-sm"
+            onClick={() => setShowLeaderboard(true)}
+          >
+            View Leaderboard
+          </button>
           <button type="button" className="ad-btn ad-btn-outline ad-btn-sm" onClick={resetSession}>
             Reset session
           </button>
@@ -824,96 +979,45 @@ export default function PaddleStackingPage() {
       </div>
 
       <div className="grid xl:grid-cols-3 gap-6">
-        {/* Queue column: add panel + list panel */}
         <div className="xl:col-span-1 space-y-4">
-          <div className="ad-card p-4 transition-all duration-200">
-            <h3 className="text-sm font-black text-white uppercase tracking-wide mb-2">Add players</h3>
-              <p className="text-[11px] text-[var(--ad-muted)] mb-3">
-              {stackMode === "mix" &&
-                "Add players in order (no tags). Next game groups four mix players from the top, in list order."}
-                {stackMode === "random" &&
-                  "Tag category & skill for categorized players. Doubles: the top of the list decides — categorized first players get the next three matching tags in order; mix players use the next four mix rows (never mixed together)."}
-              {stackMode === "group" &&
-                "Submit four names as one fixed unit. The group advances as a single FIFO slot (4 players)."}
-            </p>
-            <div className="flex flex-wrap gap-1.5 mb-3">
-              <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded bg-[var(--ad-pickle)]/15 text-[var(--ad-pickle)] border border-[var(--ad-pickle)]/30">
-                Mode: {STACK_MODES.find((m) => m.id === stackMode)?.label ?? stackMode}
-              </span>
+          <form onSubmit={addPlayer} className="bg-slate-900/50 p-4 rounded-xl border border-slate-700/50 mb-4">
+            <h4 className="text-sm font-bold text-white mb-3">Add Player</h4>
+            <div className="space-y-3">
+              <input
+                className="af-input"
+                placeholder="Player Name"
+                value={addPlayerName}
+                onChange={(e) => setAddPlayerName(e.target.value)}
+                required
+              />
+              <select
+                className="af-input"
+                value={addPlayerSkill}
+                onChange={(e) => setAddPlayerSkill(e.target.value)}
+                required
+              >
+                <option value="" disabled>Select Skill Level</option>
+                <option value="beginner">Beginner</option>
+                <option value="novicelow">Novice Low</option>
+                <option value="novicehigh">Novice High</option>
+                <option value="intermediate">Intermediate</option>
+              </select>
+              <select
+                className="af-input"
+                value={addPlayerGender}
+                onChange={(e) => setAddPlayerGender(e.target.value)}
+                required
+              >
+                <option value="" disabled>Select Gender</option>
+                <option value="male">Male</option>
+                <option value="female">Female</option>
+                <option value="genderless">Genderless</option>
+              </select>
+              <button type="submit" className="ad-btn ad-btn-success w-full text-xs py-2 shadow-lg shadow-emerald-500/20">
+                Add to Queue
+              </button>
             </div>
-
-            {(stackMode === "mix" || stackMode === "random") && (
-              <form onSubmit={addPlayer} className="space-y-3">
-                {stackMode === "random" && (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                    <div className="af-group">
-                      <label className="af-label">Category</label>
-                      <select
-                        className="af-input"
-                        value={randomCategory}
-                        onChange={(e) => setRandomCategory(e.target.value)}
-                      >
-                        {CATEGORY_OPTIONS.map((o) => (
-                          <option key={o.id} value={o.id}>
-                            {o.label}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                    <div className="af-group">
-                      <label className="af-label">Skill level</label>
-                      <select
-                        className="af-input"
-                        value={randomSkill}
-                        onChange={(e) => setRandomSkill(e.target.value)}
-                      >
-                        {SKILL_OPTIONS.map((o) => (
-                          <option key={o.id} value={o.id}>
-                            {o.label}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                  </div>
-                )}
-                <div className="flex flex-col sm:flex-row gap-2">
-                  <input
-                    className="af-input flex-1 min-w-0"
-                    placeholder="Player name"
-                    value={newPlayer}
-                    onChange={(e) => setNewPlayer(e.target.value)}
-                  />
-                  <button type="submit" className="ad-btn ad-btn-primary ad-btn-sm shrink-0 w-full sm:w-auto">
-                    Add to queue
-                  </button>
-                </div>
-              </form>
-            )}
-
-            {stackMode === "group" && (
-              <form onSubmit={addGroupSubmit} className="space-y-2">
-                <div className="text-[10px] font-bold uppercase text-[var(--ad-muted)]">Fixed group (4 players)</div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                  {[0, 1, 2, 3].map((i) => (
-                    <input
-                      key={i}
-                      className="af-input"
-                      placeholder={`Player ${i + 1}`}
-                      value={groupNames[i]}
-                      onChange={(e) => {
-                        const next = [...groupNames];
-                        next[i] = e.target.value;
-                        setGroupNames(next);
-                      }}
-                    />
-                  ))}
-                </div>
-                <button type="submit" className="ad-btn ad-btn-primary ad-btn-sm w-full sm:w-auto">
-                  Add group to queue
-                </button>
-              </form>
-            )}
-          </div>
+          </form>
 
           <div className="ad-card p-4 transition-all duration-200 flex flex-col min-h-0">
             <h3 className="text-sm font-black text-white uppercase tracking-wide mb-1">Player queue (FIFO)</h3>
@@ -1018,84 +1122,37 @@ export default function PaddleStackingPage() {
         {/* Courts + assign */}
         <div className="xl:col-span-2 space-y-4">
           <div className="ad-card p-4">
-            <h3 className="text-sm font-black text-white uppercase tracking-wide mb-3">Game assignment</h3>
-
-            <div className="rounded-lg border border-[var(--ad-border)] bg-[#0d0f14]/80 p-3 mb-4 space-y-3">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="text-[10px] font-bold uppercase tracking-wider text-[var(--ad-muted)]">
-                  Available courts (auto)
-                </div>
-                <span className="text-[10px] text-[var(--ad-muted)]" title="Refreshes when bookings change; time window checked every 30s">
-                  Live · {format(nowForBookings, "MMM d, HH:mm")}
-                </span>
-              </div>
-              {facilityCourts.length === 0 ? (
-                <p className="text-[11px] text-amber-400/95 leading-relaxed">
-                  No courts in your facility yet.{" "}
-                  <Link to="/admin/courts" className="underline font-semibold text-[var(--ad-pickle)]">
-                    Add courts in Court management
-                  </Link>{" "}
-                  first.
-                </p>
-              ) : openFacilityCourts.length === 0 ? (
-                <p className="text-[11px] text-[var(--ad-muted)] leading-relaxed">
-                  No courts are free for paddle assignment right now (inactive, or an approved booking overlaps the
-                  current time). Ongoing matches below stay until you mark them finished.
-                </p>
-              ) : (
-                <ul className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                  {openFacilityCourts.map((fc) => (
-                    <li
-                      key={fc.id}
-                      className="flex items-center justify-between gap-2 rounded-lg border border-emerald-500/25 bg-emerald-500/5 px-3 py-2 text-sm"
+            <h3 className="text-sm font-black text-white uppercase tracking-wide mb-3">Match Control</h3>
+            
+            <div className="flex flex-col sm:flex-row gap-4 items-center justify-between bg-slate-900/50 p-4 rounded-xl border border-slate-700/50">
+              <div>
+                <div className="flex items-center gap-2 mb-1">
+                  <p className="text-sm font-bold text-white">Assigned Court:</p>
+                  {courts.filter(c => c.status === "available").length > 0 ? (
+                    <select
+                      className="af-input text-sm py-1 px-2 border-slate-700 bg-slate-800 text-emerald-400 font-bold"
+                      value={assignCourtId}
+                      onChange={(e) => setAssignCourtId(e.target.value)}
                     >
-                      <span className="font-semibold text-[var(--ad-text)] truncate">{fc.name}</span>
-                      <span className="text-[10px] font-bold uppercase shrink-0 text-emerald-400">Available</span>
-                    </li>
-                  ))}
-                </ul>
-              )}
+                      {courts.filter(c => c.status === "available").map(c => (
+                        <option key={c.id} value={c.id}>{c.name}</option>
+                      ))}
+                    </select>
+                  ) : (
+                    <span className="text-emerald-400 font-bold text-sm">None</span>
+                  )}
+                </div>
+                <p className="text-xs text-slate-400">
+                  Format: <span className="text-white font-semibold">{assignMode === "singles" ? "Singles (2 Players)" : "Doubles (4 Players)"}</span>
+                </p>
+              </div>
+              <button type="button" className="ad-btn ad-btn-primary px-6 py-3 shadow-lg shadow-emerald-500/20" onClick={assignMatch}>
+                Start Next Match
+              </button>
             </div>
-
-            <div className="flex flex-wrap gap-3 mb-4">
-              <div className="af-group min-w-[140px]">
-                <label className="af-label">Format</label>
-                <select
-                  className="af-input"
-                  value={assignMode}
-                  onChange={(e) => setAssignMode(e.target.value)}
-                >
-                  <option value="doubles">Doubles (4)</option>
-                  <option value="singles">Singles (2)</option>
-                </select>
-              </div>
-              <div className="af-group flex-1 min-w-[160px]">
-                <label className="af-label">Court</label>
-                <select
-                  className="af-input"
-                  value={assignCourtId}
-                  onChange={(e) => setAssignCourtId(e.target.value)}
-                >
-                  <option value="">Select…</option>
-                  {courts.map((c) => (
-                    <option key={c.id} value={c.id} disabled={c.status !== "available"}>
-                      {c.name}
-                      {c.facilityCourtId ? " · facility" : ""}
-                      {c.status === "ongoing" ? " (busy)" : ""}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div className="flex flex-wrap items-end gap-2">
-                <button type="button" className="ad-btn ad-btn-primary" onClick={assignMatch}>
-                  Take next from queue (FIFO) → court
-                </button>
-              </div>
-            </div>
-
-            <p className="text-[11px] text-[var(--ad-muted)] mb-4">
-              Same name cannot appear twice in the queue (including inside a group). FIFO order is preserved for
-              “Take next from queue”. Groups count as one slot. To play again, add players back after the game.
+            
+            <p className="text-[11px] text-[var(--ad-muted)] mt-4">
+              Takes the top {assignMode === "singles" ? 2 : 4} players from the queue in order and moves them to the active court. Groups count as one slot.
             </p>
 
             {courts.some((c) => c.status === "ongoing") && (
@@ -1163,9 +1220,22 @@ export default function PaddleStackingPage() {
           </div>
 
           <div className="ad-card overflow-hidden">
-            <div className="ad-card-header">
-              <h3 className="ad-card-title">Match history</h3>
-              <span className="text-xs text-[var(--ad-muted)]">{history.length} recorded</span>
+            <div className="ad-card-header flex justify-between items-center">
+              <div>
+                <h3 className="ad-card-title">Match history</h3>
+                <span className="text-xs text-[var(--ad-muted)]">{history.length} recorded</span>
+              </div>
+              {history.length > 0 && (
+                <button
+                  type="button"
+                  onClick={clearMatchHistory}
+                  className="ad-btn ad-btn-sm ad-btn-outline ad-btn-danger flex items-center gap-1"
+                  title="Clear Match History"
+                >
+                  <span className="material-symbols-outlined text-[14px]">delete</span>
+                  Clear History
+                </button>
+              )}
             </div>
             <div className="overflow-auto max-h-[585px] custom-scrollbar">
               <table className="ad-table">
@@ -1197,7 +1267,11 @@ export default function PaddleStackingPage() {
                               const { title, detail } = playerSlotSummaryLines(p);
                               return (
                                 <div key={idx}>
-                                  <div className="text-[var(--ad-text)]">{title}</div>
+                                  <div className="text-[var(--ad-text)]">
+                                    {title}
+                                    {p.hasPaid === true && <span className="ml-1.5 text-emerald-400" title="Paid">✓</span>}
+                                    {p.hasPaid === false && <span className="ml-1.5 text-red-400" title="Unpaid">✗</span>}
+                                  </div>
                                   {detail && (
                                     <div className="text-[10px] text-[var(--ad-muted)] leading-snug">
                                       {detail}
@@ -1236,6 +1310,165 @@ export default function PaddleStackingPage() {
           </div>
         </div>
       </div>
+
+      {finishingMatchId && finishingCourt && (
+        <div
+          className="ad-modal-backdrop"
+          onClick={(e) => e.target === e.currentTarget && closeFinishModal()}
+        >
+          <div className="ad-modal">
+            <div className="ad-modal-header">
+              <h3>Complete match — {finishingCourt.name}</h3>
+              <button type="button" className="ad-modal-close" onClick={closeFinishModal}>
+                ✕
+              </button>
+            </div>
+            <form className="ad-modal-form" onSubmit={submitMatchScore}>
+              <p className="text-sm text-[var(--ad-muted)] -mt-1 mb-4">
+                Enter the final score. Stats update for all players and the court clears on submit.
+              </p>
+              <div className="grid sm:grid-cols-2 gap-4">
+                <div className="af-group">
+                  <label className="af-label">Team 1 — {teamDisplayLabel(finishingTeams.teamA)}</label>
+                  <input
+                    className="af-input text-lg font-bold"
+                    type="number"
+                    min="0"
+                    inputMode="numeric"
+                    placeholder="0"
+                    value={scoreA}
+                    onChange={(e) => setScoreA(e.target.value)}
+                    autoFocus
+                    required
+                  />
+                </div>
+                <div className="af-group">
+                  <label className="af-label">Team 2 — {teamDisplayLabel(finishingTeams.teamB)}</label>
+                  <input
+                    className="af-input text-lg font-bold"
+                    type="number"
+                    min="0"
+                    inputMode="numeric"
+                    placeholder="0"
+                    value={scoreB}
+                    onChange={(e) => setScoreB(e.target.value)}
+                    required
+                  />
+                </div>
+              </div>
+              <div className="ad-modal-footer">
+                <button type="button" className="ad-btn ad-btn-outline" onClick={closeFinishModal}>
+                  Cancel
+                </button>
+                <button type="submit" className="ad-btn ad-btn-success">
+                  Submit &amp; clear court
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {showLeaderboard && (
+        <div
+          className="ad-modal-backdrop"
+          onClick={(e) => e.target === e.currentTarget && setShowLeaderboard(false)}
+        >
+          <div className="ad-modal ad-modal-wide" style={{ maxWidth: "720px", width: "95vw" }}>
+            <div className="ad-modal-header">
+              <div>
+                <h3>Player statistics</h3>
+                <p className="text-xs text-[var(--ad-muted)] mt-1 font-normal">
+                  Event-only stats for this session{sessionId ? ` (${sessionId.substring(0, 8)}…)` : ""}
+                </p>
+              </div>
+              <button type="button" className="ad-modal-close" onClick={() => setShowLeaderboard(false)}>
+                ✕
+              </button>
+            </div>
+            <div className="overflow-auto max-h-[70vh] custom-scrollbar">
+              <table className="ad-table">
+                <thead>
+                  <tr>
+                    <th className="w-12">Rank</th>
+                    <th>
+                      <button
+                        type="button"
+                        className="font-inherit text-inherit hover:text-[var(--ad-pickle)]"
+                        onClick={() => toggleLeaderboardSort("playerName")}
+                      >
+                        Player{leaderboardSortIndicator("playerName")}
+                      </button>
+                    </th>
+                    <th className="text-center w-16">
+                      <button
+                        type="button"
+                        className="font-inherit text-inherit hover:text-[var(--ad-pickle)]"
+                        onClick={() => toggleLeaderboardSort("wins")}
+                      >
+                        W{leaderboardSortIndicator("wins")}
+                      </button>
+                    </th>
+                    <th className="text-center w-16">
+                      <button
+                        type="button"
+                        className="font-inherit text-inherit hover:text-[var(--ad-pickle)]"
+                        onClick={() => toggleLeaderboardSort("losses")}
+                      >
+                        L{leaderboardSortIndicator("losses")}
+                      </button>
+                    </th>
+                    <th className="text-center w-20">
+                      <button
+                        type="button"
+                        className="font-inherit text-inherit hover:text-[var(--ad-pickle)]"
+                        onClick={() => toggleLeaderboardSort("pointDiff")}
+                      >
+                        Diff{leaderboardSortIndicator("pointDiff")}
+                      </button>
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {sortedLeaderboard.length === 0 ? (
+                    <tr>
+                      <td colSpan={5} className="ad-empty">
+                        No stats yet — finish a match to populate the leaderboard.
+                      </td>
+                    </tr>
+                  ) : (
+                    sortedLeaderboard.map((row, idx) => (
+                      <tr key={row.id}>
+                        <td className="text-center font-mono text-[var(--ad-muted)]">{idx + 1}</td>
+                        <td className="ad-td-main">{row.playerName}</td>
+                        <td className="text-center font-semibold text-emerald-400">{row.wins ?? 0}</td>
+                        <td className="text-center font-semibold text-red-400">{row.losses ?? 0}</td>
+                        <td
+                          className={`text-center font-bold ${
+                            (row.pointDiff ?? 0) > 0
+                              ? "text-emerald-400"
+                              : (row.pointDiff ?? 0) < 0
+                                ? "text-red-400"
+                                : "text-[var(--ad-muted)]"
+                          }`}
+                        >
+                          {(row.pointDiff ?? 0) > 0 ? "+" : ""}
+                          {row.pointDiff ?? 0}
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+            <div className="ad-modal-footer">
+              <button type="button" className="ad-btn ad-btn-outline" onClick={() => setShowLeaderboard(false)}>
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -24,7 +24,7 @@ import {
 import toast from "react-hot-toast";
 import { format, addDays } from "date-fns";
 import { roundMoney, parseCashAmount, parseAmountPaid } from "../lib/bookingMoney";
-import { TIME_SLOTS, isSlotStartAvailableForDuration, calculateEndTime, isSlotWithinCourtHours, getEffectiveCourtStatus, isSlotDuringOpenPlay } from "../lib/bookingSlots";
+import { TIME_SLOTS, isSlotStartAvailableForDuration, calculateEndTime, isSlotWithinCourtHours, getEffectiveCourtStatus, isSlotDuringOpenPlay, isCourtActiveDuringSlot } from "../lib/bookingSlots";
 import {
   PLAN_FULL,
   PLAN_PARTIAL,
@@ -193,7 +193,7 @@ export default function Book() {
 
   useEffect(() => {
     if (activeCourts.length === 0) return;
-    const bookableCourts = activeCourts.filter(c => !c.isOpenPlay);
+    const bookableCourts = activeCourts;
     if (bookableCourts.length === 0) return;
     setForm((f) => {
       if (courtParam && bookableCourts.some((c) => c.id === courtParam)) {
@@ -359,11 +359,11 @@ export default function Book() {
       if (f.isCustomTime) {
         if (!f.customStartTime) return f;
         const time12 = format24to12(f.customStartTime);
-        if (isSlotStartAvailableForDuration(time12, actualD, dayBookings) && isSlotWithinCourtHours(time12, actualD, court) && !isSlotDuringOpenPlay(time12, actualD, form.date, court?.rawCourt)) return f;
+        if (isSlotStartAvailableForDuration(time12, actualD, dayBookings) && isSlotWithinCourtHours(time12, actualD, court) && isCourtActiveDuringSlot(court?.rawCourt, form.date, time12, actualD)) return f;
         return { ...f, customStartTime: "" };
       } else {
         if (!f.timeSlot) return f;
-        if (isSlotStartAvailableForDuration(f.timeSlot, actualD, dayBookings) && isSlotWithinCourtHours(f.timeSlot, actualD, court) && !isSlotDuringOpenPlay(f.timeSlot, actualD, form.date, court?.rawCourt)) return f;
+        if (isSlotStartAvailableForDuration(f.timeSlot, actualD, dayBookings) && isSlotWithinCourtHours(f.timeSlot, actualD, court) && isCourtActiveDuringSlot(court?.rawCourt, form.date, f.timeSlot, actualD)) return f;
         return { ...f, timeSlot: "" };
       }
     });
@@ -542,14 +542,12 @@ export default function Book() {
         toast.error("That time is no longer available. Please choose another slot.");
         return;
       }
-      if (court?.rawCourt?.isOpenPlay) {
-        toast.error("This court is currently set to Open Play mode and cannot be booked");
+
+      if (!isCourtActiveDuringSlot(court?.rawCourt, form.date, actualTimeSlot, actualDuration)) {
+        toast.error("That time is unavailable due to a scheduled court deactivation.");
         return;
       }
-      if (isSlotDuringOpenPlay(actualTimeSlot, actualDuration, form.date, court?.rawCourt)) {
-        toast.error("Court is reserved for Open Play during this time");
-        return;
-      }
+
       if (!isSlotWithinCourtHours(actualTimeSlot, actualDuration, court)) {
         toast.error(`The selected time is outside the court's operating hours (${court.activeStartTime || "06:00"} - ${court.activeEndTime || "22:00"}).`);
         return;
@@ -881,15 +879,11 @@ export default function Book() {
                             <button
                               key={c.id}
                               type="button"
-                              disabled={c.isOpenPlay}
                               onClick={() => setForm({ ...form, courtId: c.id, timeSlot: "" })}
-                              className={`rounded-xl border text-left transition-all overflow-hidden flex flex-col ${c.isOpenPlay
-                                ? "border-slate-800 bg-slate-900/50 opacity-40 cursor-not-allowed"
-                                : form.courtId === c.id
+                              className={`rounded-xl border text-left transition-all overflow-hidden flex flex-col ${form.courtId === c.id
                                   ? "border-green-500 bg-green-500/10"
                                   : "border-slate-700 bg-slate-800 hover:border-slate-600"
                                 }`}
-                              title={c.isOpenPlay ? "Open Play - Not Available for Booking" : ""}
                             >
                               {c.picture && (
                                 <div className="w-full h-32 bg-slate-900 shrink-0">
@@ -905,11 +899,6 @@ export default function Book() {
                                   <span className={`text-xs px-2 py-0.5 rounded-full inline-block mr-1 ${kindClass}`}>
                                     {kind}
                                   </span>
-                                  {c.isOpenPlay && (
-                                    <span className="text-xs px-2 py-0.5 rounded-full inline-block bg-indigo-500/20 text-indigo-400">
-                                      Open Play
-                                    </span>
-                                  )}
                                 </div>
                                 <div className="text-green-400 font-semibold mt-3">
                                   ₱{price.toLocaleString()}
@@ -1104,16 +1093,15 @@ export default function Book() {
                             <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
                               {TIME_SLOTS.map((slot) => {
                                 const inPast = isSlotInPast(form.date, slot);
-                                const isSlotOccupied = !isSlotStartAvailableForDuration(slot, 0.25, dayBookings);
-                                const isTaken = !inPast && !isSlotStartAvailableForDuration(
+                                const isSlotOccupied = !isSlotStartAvailableForDuration(slot, 0.25, dayBookings) || !isCourtActiveDuringSlot(court?.rawCourt, form.date, slot, 0.25);
+                                const isTaken = !inPast && (!isSlotStartAvailableForDuration(
                                   slot,
                                   actualDuration,
                                   dayBookings
-                                );
+                                ) || !isCourtActiveDuringSlot(court?.rawCourt, form.date, slot, actualDuration));
                                 const outOfHours = !isSlotWithinCourtHours(slot, actualDuration, court);
-                                const isOpenPlay = isSlotDuringOpenPlay(slot, actualDuration, form.date, court?.rawCourt);
                                 const isOverlap = isTaken && !isSlotOccupied;
-                                const isUnavailable = inPast || isTaken || outOfHours || isOpenPlay;
+                                const isUnavailable = inPast || isTaken || outOfHours;
 
                                 return (
                                   <button
@@ -1125,13 +1113,11 @@ export default function Book() {
                                       form.timeSlot === slot ? "bg-green-500 text-slate-950 glow-green" :
                                         "bg-slate-800 text-slate-400 hover:bg-slate-700 hover:text-white border border-slate-700"
                                       }`}
-                                    title={isOpenPlay ? "This court is reserved for Open Play during this time" : ""}
                                   >
                                     {slot}
                                     {isSlotOccupied && <div className="text-[10px] leading-tight mt-0.5">Booked</div>}
                                     {isOverlap && !isSlotOccupied && <div className="text-[10px] leading-tight mt-0.5">Conflicts</div>}
                                     {inPast && !isSlotOccupied && <div className="text-[10px] leading-tight mt-0.5">Not Available</div>}
-                                    {isOpenPlay && !isSlotOccupied && !inPast && <div className="text-[10px] leading-tight mt-0.5 text-indigo-400/70">Open Play</div>}
                                   </button>
                                 );
                               })}

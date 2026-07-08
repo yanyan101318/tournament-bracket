@@ -34,6 +34,7 @@ export default function AdminSchedule() {
   const [bookings, setBookings] = useState([]);
   const [payments, setPayments] = useState([]);
   const [tournaments, setTournaments] = useState([]);
+  const [courts, setCourts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState(() => format(new Date(), "yyyy-MM-dd"));
 
@@ -55,10 +56,14 @@ export default function AdminSchedule() {
     const unsubT = onSnapshot(collection(db, "tournamentsV2"), (snap) => {
       setTournaments(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
     });
+    const unsubC = onSnapshot(collection(db, "courts"), (snap) => {
+      setCourts(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+    });
     return () => {
       unsubB();
       unsubP();
       unsubT();
+      unsubC();
     };
   }, []);
 
@@ -138,7 +143,7 @@ export default function AdminSchedule() {
       tournamentsByDate: tournamentsByDateMap,
       activities: rows,
     };
-  }, [bookings, payments, tournaments, selected]);
+  }, [bookings, payments, tournaments, courts, selected]);
 
   if (loading) {
     return (

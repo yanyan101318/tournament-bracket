@@ -22,7 +22,6 @@ import AdminSchedule from "./admin/AdminSchedule";
 import Book from "./components/Book";
 import InventoryPage from "./admin/InventoryPage";
 import PaddleStackingPage from "./admin/PaddleStackingPage";
-import OpenPlayPage from "./admin/OpenPlayPage";
 import VendorStoresPage from "./admin/vendors/VendorStoresPage";
 import VendorPortal from "./vendor/VendorPortal";
 
@@ -94,7 +93,6 @@ export default function App() {
               <Route path="tournament" element={<AdminTournament />} />
               <Route path="tournament-v2" element={<AdminTournamentV2 />} />
               <Route path="paddle-stack" element={<PaddleStackingPage />} />
-              <Route path="open-play" element={<OpenPlayPage />} />
               <Route path="analytics" element={<Analytics />} />
               <Route path="equipment" element={<InventoryPage />} />
               <Route path="inventory" element={<Navigate to="/admin/equipment" replace />} />

@@ -154,7 +154,7 @@ export default function AdminDashboard() {
       <section className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 mb-8">
         <PosStatTile
           icon="book_online"
-          label="Bookings today"
+          label="Daily Transaction"
           value={String(stats.bookingsToday)}
           sub="Created since midnight"
           accent="cyan"
@@ -168,7 +168,7 @@ export default function AdminDashboard() {
         />
         <PosStatTile
           icon="sports_tennis"
-          label="Active today"
+          label="Active Bookings today"
           value={String(stats.activeBookings)}
           sub="Approved bookings dated today"
           accent="violet"

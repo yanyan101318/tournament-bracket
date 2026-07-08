@@ -117,10 +117,6 @@ export function canExtendBooking(p) {
   return { ok: true, newDuration: newDur, newEndTime: calculateEndTime(timeSlot, newDur) };
 }
 
-/**
- * Returns the effective status of the court (true for active, false for inactive).
- * Checks if a temporary override is active and hasn't expired.
- */
 export function getEffectiveCourtStatus(court) {
   if (!court) return false;
   
@@ -129,8 +125,20 @@ export function getEffectiveCourtStatus(court) {
       ? court.override_expires_at.toMillis() 
       : new Date(court.override_expires_at).getTime();
       
-    if (expiresAt > Date.now()) {
-      return court.override_status === true;
+    if (court.override_starts_at) {
+      const startsAt = typeof court.override_starts_at.toMillis === "function"
+        ? court.override_starts_at.toMillis()
+        : new Date(court.override_starts_at).getTime();
+      
+      const now = Date.now();
+      if (now >= startsAt && now < expiresAt) {
+        return court.override_status === true;
+      }
+    } else {
+      // Legacy behavior
+      if (expiresAt > Date.now()) {
+        return court.override_status === true;
+      }
     }
   }
   
@@ -143,48 +151,49 @@ export function getEffectiveCourtStatus(court) {
 }
 
 /**
- * Checks if the requested booking overlaps with any Open Play schedule.
- * @param {string} timeSlot - The requested start time (e.g. "09:00 AM")
- * @param {number} durationHours - Booking duration
- * @param {string} dateStr - The requested date "YYYY-MM-DD"
- * @param {object} court - The court object
- * @returns {boolean} true if the slot overlaps with an open play schedule
+ * Checks if a slot overlaps with a scheduled inactive override for a specific court.
+ * Used to block bookings during scheduled downtimes.
  */
-export function isSlotDuringOpenPlay(timeSlot, durationHours, dateStr, court) {
-  if (!court || !court.isOpenPlay || !Array.isArray(court.openPlaySchedule)) {
-    return false;
-  }
+export function isCourtActiveDuringSlot(court, targetDate, timeSlot, durationHours) {
+  if (!court) return false;
+  
+  // If the court is generally inactive (no temporary override, just permanently inactive), it's not active.
+  // Wait, if it has a future activation, the base is inactive, and we want to check if the slot is inside the activation.
+  const slotDate = new Date(targetDate);
+  const startMins = timeToMinutes(timeSlot);
+  
+  // Create start and end timestamps for the slot
+  const slotStartMs = new Date(slotDate.getFullYear(), slotDate.getMonth(), slotDate.getDate(), 
+                               Math.floor(startMins / 60), startMins % 60).getTime();
+  const slotEndMs = slotStartMs + durationHours * 3600 * 1000;
 
-  const newStart = timeToMinutes(timeSlot);
-  if (newStart === 0) return false;
-  const newEnd = newStart + durationHours * 60;
+  if (court.override_expires_at) {
+    const expiresAt = typeof court.override_expires_at.toMillis === "function" 
+      ? court.override_expires_at.toMillis() 
+      : new Date(court.override_expires_at).getTime();
+      
+    const startsAt = court.override_starts_at ? 
+      (typeof court.override_starts_at.toMillis === "function" 
+        ? court.override_starts_at.toMillis() 
+        : new Date(court.override_starts_at).getTime()) 
+      : 0;
 
-  // JS Date uses 0 for Sunday. Parse the date string securely.
-  const [yy, mm, dd] = (dateStr || "").split("-");
-  const reqDate = new Date(parseInt(yy, 10), parseInt(mm, 10) - 1, parseInt(dd, 10));
-  const reqDayOfWeek = reqDate.getDay(); // 0-6
-
-  for (const schedule of court.openPlaySchedule) {
-    if (!schedule.isActive) continue;
-
-    // Check if the schedule applies to this date
-    if (schedule.type === "recurring") {
-      if (Number(schedule.dayOfWeek) !== reqDayOfWeek) continue;
-    } else if (schedule.type === "onetime") {
-      if (schedule.date !== dateStr) continue;
-    } else {
-      continue;
+    // Does the slot overlap with the override period?
+    // overlap: slotStart < overrideEnd && slotEnd > overrideStart
+    const overlaps = slotStartMs < expiresAt && slotEndMs > startsAt;
+    
+    if (overlaps) {
+      // If it overlaps, the status during this slot is the override status
+      return court.override_status === true;
     }
-
-    const opStart = timeToMinutes(schedule.startTime);
-    const opEnd = timeToMinutes(schedule.endTime);
-
-    // Overlap condition
-    if (newStart < opEnd && newEnd > opStart) {
-      return true; // Overlaps with open play!
-    }
   }
-
-  return false;
+  
+  // If no override overlaps, use the base status
+  if (typeof court.base_status === "boolean") {
+    return court.base_status;
+  }
+  return court.isActive !== false;
 }
+
+
 

@@ -47,6 +47,39 @@ function bookingDayString(b, toMs) {
   return format(new Date(ms), "yyyy-MM-dd");
 }
 
+function formatTimeSlotWithEnd(timeStr, durationHours) {
+  if (!timeStr) return "—";
+  const str = String(timeStr).trim();
+  const dur = Number(durationHours) || 1;
+  let startMins = 0;
+  
+  const match12 = str.match(/^(\d{1,2}):(\d{2})\s*([AP]M)$/i);
+  if (match12) {
+    let hh = parseInt(match12[1], 10) % 12;
+    const mm = parseInt(match12[2], 10);
+    if (match12[3].toUpperCase() === "PM") hh += 12;
+    startMins = hh * 60 + mm;
+  } else {
+    const match24 = str.match(/^(\d{1,2}):(\d{2})$/);
+    if (match24) {
+      startMins = parseInt(match24[1], 10) * 60 + parseInt(match24[2], 10);
+    } else {
+      return str;
+    }
+  }
+  
+  const endMins = startMins + (dur * 60);
+  const endH = Math.floor(endMins / 60) % 24;
+  const endM = Math.floor(endMins % 60);
+  
+  const ampm = endH >= 12 ? "PM" : "AM";
+  let displayH = endH % 12;
+  if (displayH === 0) displayH = 12;
+  const displayM = String(endM).padStart(2, "0");
+  
+  return `${str} to ${displayH}:${displayM} ${ampm}`;
+}
+
 export default function BookingManager() {
   const EMPTY_BALANCE_MODAL = { open: false, booking: null, amount: "", method: "cash" };
   const PAGE_SIZE = 10;
@@ -72,6 +105,65 @@ export default function BookingManager() {
   const [paidEditDraft, setPaidEditDraft] = useState("");
   const [savingPaid, setSavingPaid] = useState(false);
   const { wrapSync } = useOfflineSync();
+
+  const [nowMs, setNowMs] = useState(Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNowMs(Date.now()), 60000);
+    return () => clearInterval(id);
+  }, []);
+
+  const checkIsNearDue = (b) => {
+    if (b.acknowledgedTimeEnd) return false;
+    const status = (b.status || "").trim().toLowerCase();
+    if (status !== "approved" && status !== "ongoing") return false;
+    
+    const now = new Date(nowMs);
+    const todayStr = [
+      now.getFullYear(),
+      String(now.getMonth() + 1).padStart(2, "0"),
+      String(now.getDate()).padStart(2, "0"),
+    ].join("-");
+    
+    if (b.date !== todayStr) return false;
+    
+    const timeStr = String(b.timeSlot || "").trim();
+    let startMins = 0;
+    const match12 = timeStr.match(/^(\d{1,2}):(\d{2})\s*([AP]M)$/i);
+    if (match12) {
+      let hh = parseInt(match12[1], 10) % 12;
+      const mm = parseInt(match12[2], 10);
+      if (match12[3].toUpperCase() === "PM") hh += 12;
+      startMins = hh * 60 + mm;
+    } else {
+      const match24 = timeStr.match(/^(\d{1,2}):(\d{2})$/);
+      if (match24) {
+        startMins = parseInt(match24[1], 10) * 60 + parseInt(match24[2], 10);
+      }
+    }
+    if (startMins === 0) return false;
+    
+    const duration = Number(b.duration) || 1;
+    const endMins = startMins + duration * 60;
+    
+    const endDate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), Math.floor(endMins / 60), endMins % 60, 0);
+    const expMs = endDate.getTime();
+    const minsLeft = (expMs - nowMs) / 60000;
+    return minsLeft <= 5 && minsLeft >= -30;
+  };
+
+  async function acknowledgeBooking(id, e) {
+    e.stopPropagation();
+    setActing(id);
+    try {
+      await updateDoc(doc(db, "bookings", id), { acknowledgedTimeEnd: true });
+      toast.success("Booking acknowledged.");
+    } catch (err) {
+      console.error(err);
+      toast.error("Failed to acknowledge booking.");
+    } finally {
+      setActing(null);
+    }
+  }
 
   useEffect(() => {
     document.title = "RANAW PICKLEBALL COURT | Booking Management";
@@ -384,6 +476,7 @@ export default function BookingManager() {
         customerPaymentStatus: payStatus,
         hourlyRate: roundMoney(hourly),
         extendedAt: Timestamp.now(),
+        acknowledgedTimeEnd: false,
       });
       const paySnap = await getDocs(query(collection(db, "payments"), where("bookingId", "==", b.id)));
       paySnap.forEach((d) => {
@@ -887,12 +980,14 @@ export default function BookingManager() {
               {paged.length === 0 && (
                 <tr><td colSpan={7} className="ad-empty">No bookings found.</td></tr>
               )}
-              {paged.map(b => (
-                <tr key={b.id} className="ad-table-row" onClick={() => setSelected(b)}>
+              {paged.map(b => {
+                const isNearDue = checkIsNearDue(b);
+                return (
+                <tr key={b.id} className={`ad-table-row ${isNearDue ? "bg-red-900/20 border-l-2 border-l-red-500" : ""}`} onClick={() => setSelected(b)}>
                   <td className="ad-td-main">{b.playerName ?? "—"}</td>
                   <td>{b.courtName ?? b.courtId ?? "—"}</td>
                   <td>{b.date ?? "—"}</td>
-                  <td>{b.timeSlot ?? "—"}</td>
+                  <td>{b.endTime ? `${b.timeSlot} to ${b.endTime}` : formatTimeSlotWithEnd(b.timeSlot, b.duration)}</td>
                   <td>
                     <span className={`ad-badge ad-badge-${PAY_STATUS_BADGE[(b.customerPaymentStatus || "").toLowerCase()] ?? "pending"}`}>
                       {(b.customerPaymentStatus ?? "—").toString()}
@@ -901,6 +996,13 @@ export default function BookingManager() {
                   <td><span className={`ad-badge ad-badge-${b.hasPendingWrites ? "pending" : (STATUS_COLORS[b.status] ?? "pending")}`}>{b.hasPendingWrites ? "Pending Sync" : (b.status ?? "Pending")}</span></td>
                   <td onClick={e => e.stopPropagation()}>
                     <div className="ad-action-btns">
+                      {isNearDue && (
+                        <button className="ad-btn ad-btn-sm ad-btn-success shadow-[0_0_8px_rgba(239,68,68,0.6)] animate-pulse"
+                          disabled={acting === b.id}
+                          onClick={(e) => acknowledgeBooking(b.id, e)}>
+                          ✓ Done
+                        </button>
+                      )}
                       {b.status !== "Approved" && (
                         <button className="ad-btn ad-btn-sm ad-btn-success"
                           disabled={acting === b.id}
@@ -927,7 +1029,8 @@ export default function BookingManager() {
                     </div>
                   </td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         </div>
@@ -973,7 +1076,7 @@ export default function BookingManager() {
                     <div className="ad-detail-row"><span>Contact</span><strong>{resolvedContact ?? selected.contactNumber ?? "—"}</strong></div>
                     <div className="ad-detail-row"><span>Court</span><strong>{selected.courtName ?? selected.courtId ?? '—'}</strong></div>
                     <div className="ad-detail-row"><span>Date</span><strong>{selected.date ?? '—'}</strong></div>
-                    <div className="ad-detail-row"><span>Time Slot</span><strong>{selected.timeSlot ?? '—'}</strong></div>
+                    <div className="ad-detail-row"><span>Time Slot</span><strong>{selected.endTime ? `${selected.timeSlot} to ${selected.endTime}` : formatTimeSlotWithEnd(selected.timeSlot, selected.duration)}</strong></div>
                     <div className="ad-detail-row"><span>Duration</span><strong>{selected.duration ?? "—"} hr</strong></div>
                     <div className="ad-detail-row"><span>Total</span><strong>₱{selectedMoney.total.toFixed(2)}</strong></div>
                     <div className="ad-detail-row ad-detail-row-edit">

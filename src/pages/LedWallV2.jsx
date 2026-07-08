@@ -189,6 +189,11 @@ export default function LedWallV2() {
                   <div className="flex-1 flex items-center justify-between px-6">
                     {/* PLAYER 1 */}
                     <div className={`flex flex-col items-center justify-center text-center ${isTbd ? 'opacity-50' : ''} ${focusedCourt ? 'w-[40%]' : 'w-[32%]'}`}>
+                      {(activeMatch.servingTeam || 1) === 1 && activeMatch.status !== "completed" && (
+                        <div className={`text-[#CCFF00] font-black tracking-widest ${focusedCourt ? 'text-3xl mb-4' : 'text-xs mb-2'} uppercase`} style={{ filter: 'drop-shadow(0 0 5px rgba(204,255,0,0.5))' }}>
+                          {(activeMatch.firstServer !== undefined ? activeMatch.firstServer : false) ? '1st Server' : '2nd Server'}
+                        </div>
+                      )}
                       <div className={`font-bold leading-tight uppercase text-white break-words drop-shadow-md flex flex-col items-center justify-center ${focusedCourt ? 'text-6xl' : 'text-3xl'}`}>
                         <span>{t1Names.p1}</span>
                         {t1Names.p2 && <span className={`font-black ${focusedCourt ? 'text-4xl my-2' : 'text-xl my-1'}`} style={{ color: theme.color }}>&</span>}
@@ -203,22 +208,14 @@ export default function LedWallV2() {
                           <div className={`font-black ${focusedCourt ? 'text-[12rem]' : 'text-7xl xl:text-8xl'} leading-none`} style={{ color: theme.color, filter: `drop-shadow(0 0 15px ${theme.glow})` }}>
                             {activeMatch.score1 || 0}
                           </div>
-                          {activeMatch.currentGame?.servingTeam === "A" && activeMatch.status !== "completed" && (
-                            <span className={`text-[#CCFF00] font-black tracking-widest ${focusedCourt ? 'text-2xl' : 'text-[10px]'} mt-2 uppercase`} style={{ filter: 'drop-shadow(0 0 5px rgba(204,255,0,0.5))' }}>
-                              🎾 SERVING {activeMatch.scoringMode === 'rally' ? (activeMatch.currentGame?.servingSide === 'right' ? '[R]' : '[L]') : (activeMatch.currentGame?.firstServer ? '[1st]' : '[2nd]')}
-                            </span>
-                          )}
+                          {/* Removed Serving label from under score A */}
                         </div>
                         <div className={`text-slate-500 font-black shrink-0 ${focusedCourt ? 'text-8xl mt-12' : 'text-5xl mt-3'}`}>-</div>
                         <div className="flex-1 flex flex-col items-start">
                           <div className={`font-black ${focusedCourt ? 'text-[12rem]' : 'text-7xl xl:text-8xl'} leading-none`} style={{ color: theme.color, filter: `drop-shadow(0 0 15px ${theme.glow})` }}>
                             {activeMatch.score2 || 0}
                           </div>
-                          {activeMatch.currentGame?.servingTeam === "B" && activeMatch.status !== "completed" && (
-                            <span className={`text-[#CCFF00] font-black tracking-widest ${focusedCourt ? 'text-2xl' : 'text-[10px]'} mt-2 uppercase`} style={{ filter: 'drop-shadow(0 0 5px rgba(204,255,0,0.5))' }}>
-                              🎾 SERVING {activeMatch.scoringMode === 'rally' ? (activeMatch.currentGame?.servingSide === 'right' ? '[R]' : '[L]') : (activeMatch.currentGame?.firstServer ? '[1st]' : '[2nd]')}
-                            </span>
-                          )}
+                          {/* Removed Serving label from under score B */}
                         </div>
                       </div>
                       <div className={`mt-2 font-black text-slate-400 tracking-[0.3em] uppercase ${focusedCourt ? 'text-2xl mt-6' : 'text-sm'}`}>
@@ -228,6 +225,11 @@ export default function LedWallV2() {
 
                     {/* PLAYER 2 */}
                     <div className={`flex flex-col items-center justify-center text-center ${isTbd ? 'opacity-50' : ''} ${focusedCourt ? 'w-[40%]' : 'w-[32%]'}`}>
+                      {(activeMatch.servingTeam || 1) === 2 && activeMatch.status !== "completed" && (
+                        <div className={`text-[#CCFF00] font-black tracking-widest ${focusedCourt ? 'text-3xl mb-4' : 'text-xs mb-2'} uppercase`} style={{ filter: 'drop-shadow(0 0 5px rgba(204,255,0,0.5))' }}>
+                          {(activeMatch.firstServer !== undefined ? activeMatch.firstServer : false) ? '1st Server' : '2nd Server'}
+                        </div>
+                      )}
                       <div className={`font-bold leading-tight uppercase text-white break-words drop-shadow-md flex flex-col items-center justify-center ${focusedCourt ? 'text-6xl' : 'text-3xl'}`}>
                         <span>{t2Names.p1}</span>
                         {t2Names.p2 && <span className={`font-black ${focusedCourt ? 'text-4xl my-2' : 'text-xl my-1'}`} style={{ color: theme.color }}>&</span>}

@@ -27,7 +27,6 @@ const TOURNAMENT_SUBLINKS = [
   { to: "/admin/tournament", label: "Tournament bracket" },
   { to: "/admin/tournament-v2", label: "Tournament V2" },
   { to: "/admin/paddle-stack", label: "Paddle stacking" },
-  { to: "/admin/open-play", label: "Open Play" },
 ];
 
 const NAV_LINKS_AFTER_TOURNAMENT = [
@@ -154,6 +153,7 @@ export default function AdminLayout() {
       let warnings = 0;
       
       for (const b of activeBookingsForWarning) {
+        if (b.acknowledgedTimeEnd) continue;
         if (b.date !== todayStr) continue;
         
         const timeStr = String(b.timeSlot || "").trim();
