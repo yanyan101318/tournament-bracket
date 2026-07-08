@@ -1,4 +1,4 @@
-import { format, parse, isValid, startOfDay, endOfDay } from "date-fns";
+import { format, parse, isValid } from "date-fns";
 import { isActiveBookingStatus } from "./bookingSlots";
 
 function normCourtKey(value) {

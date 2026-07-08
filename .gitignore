@@ -30,3 +30,6 @@ yarn-error.log*
 dist-electron/
 *.exe
 *.asar
+
+.vercel
+.env*.local

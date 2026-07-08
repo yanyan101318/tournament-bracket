@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { collection, query, orderBy, limit, getDocs } from "firebase/firestore";
 import { db } from "../firebase";
 import toast from "react-hot-toast";
@@ -21,30 +21,13 @@ const COLLECTIONS_TO_CACHE = [
 ];
 
 export default function OfflinePreloader() {
-  const [preloading, setPreloading] = useState(false);
-  const [isOnline, setIsOnline] = useState(navigator.onLine);
+  const preloadingRef = useRef(false);
+  const [, setIsOnline] = useState(navigator.onLine);
 
-  useEffect(() => {
-    const handleOnline = () => {
-      setIsOnline(true);
-      preloadCache(); // Refresh cache when reconnecting
-    };
-    const handleOffline = () => setIsOnline(false);
-
-    window.addEventListener("online", handleOnline);
-    window.addEventListener("offline", handleOffline);
-
-    return () => {
-      window.removeEventListener("online", handleOnline);
-      window.removeEventListener("offline", handleOffline);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  const preloadCache = async () => {
-    if (!navigator.onLine || preloading) return;
+  const preloadCache = useCallback(async () => {
+    if (!navigator.onLine || preloadingRef.current) return;
     
-    setPreloading(true);
+    preloadingRef.current = true;
     const toastId = toast.loading("Preparing Offline Access...", { 
       position: "bottom-left",
       style: { background: "#151e2d", color: "#64748b", border: "1px solid #334155", fontSize: "12px" }
@@ -84,24 +67,39 @@ export default function OfflinePreloader() {
           console.error("Background progressive cache error:", err);
           toast.dismiss(toastId);
         } finally {
-          setPreloading(false);
+          preloadingRef.current = false;
         }
       }, 1500);
 
     } catch (err) {
       console.error("Initial preload error:", err);
       toast.dismiss(toastId);
-      setPreloading(false);
+      preloadingRef.current = false;
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    const handleOnline = () => {
+      setIsOnline(true);
+      preloadCache(); // Refresh cache when reconnecting
+    };
+    const handleOffline = () => setIsOnline(false);
+
+    window.addEventListener("online", handleOnline);
+    window.addEventListener("offline", handleOffline);
+
+    return () => {
+      window.removeEventListener("online", handleOnline);
+      window.removeEventListener("offline", handleOffline);
+    };
+  }, [preloadCache]);
 
   // Run preload once on mount if online
   useEffect(() => {
-    if (isOnline) {
+    if (navigator.onLine) {
       preloadCache();
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [preloadCache]);
 
   return null; // Silent component, handles background ops only
 }
