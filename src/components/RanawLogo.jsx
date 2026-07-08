@@ -27,7 +27,7 @@ export default function RanawLogo({
 
   const img = (
     <img
-      src="/assets/ranaw-logo.png"
+      src="/assets/icon.png"
       alt={alt}
       width={629}
       height={396}

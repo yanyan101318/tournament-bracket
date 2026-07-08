@@ -5,7 +5,7 @@ export const BRAND_TAGLINE = "Court Reservation Management";
 export const BRAND_MOTTO = "Play. Compete. Experience Excellence.";
 
 /** Public URL path — works in print iframes on same origin. */
-export const LOGO_PATH = `${process.env.PUBLIC_URL || ""}/assets/ranaw-logo.png`;
+export const LOGO_PATH = `${process.env.PUBLIC_URL || ""}/assets/icon.png`;
 
 export function getLogoUrl() {
   if (typeof window !== "undefined" && window.location?.origin) {

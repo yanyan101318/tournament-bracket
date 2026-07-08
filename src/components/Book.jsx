@@ -86,7 +86,7 @@ const PROMOS = [
   { code: "MEMBER20", discount: 0.2, label: "20% member discount" },
 ];
 
-const PAYMENT_GCASH = "gcash";
+const PAYMENT_PNB = "pnb";
 const PAYMENT_CASH = "cash";
 
 export default function Book() {
@@ -146,7 +146,7 @@ export default function Book() {
     playerName: "",
     contactNumber: "",
     email: "",
-    paymentMethod: PAYMENT_GCASH,
+    paymentMethod: PAYMENT_PNB,
     paymentPlan: PLAN_FULL,
   });
 
@@ -268,14 +268,18 @@ export default function Book() {
         const all = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
         setRentalAddOns(
           all.filter((it) => {
-            const typeRaw = String(it.type ?? "").trim().toLowerCase();
-            const hasType = typeRaw.length > 0;
-            const hasPrice =
-              Number.isFinite(Number(it.price)) || Number.isFinite(Number(it.pricePerHour));
+            const t = String(it.type ?? "").trim().toLowerCase();
+            if (t === "sale") return false;
+
+            const hasPricePerHour = it.pricePerHour != null && it.pricePerHour !== "" && Number.isFinite(Number(it.pricePerHour));
+            const hasLegacyPrice = it.price != null && it.price !== "" && Number.isFinite(Number(it.price));
+            const isRentItem = t === "rental" || t === "rent" || t === "both" || hasPricePerHour || hasLegacyPrice;
+
+            if (!isRentItem) return false;
+
             const availableQty = Number(it.availableQty);
             const hasStock = !Number.isFinite(availableQty) || availableQty > 0;
-            if (hasType) return typeRaw === "rental" && hasPrice && hasStock;
-            return hasPrice && hasStock;
+            return hasStock;
           })
         );
       },
@@ -458,11 +462,12 @@ export default function Book() {
 
   const selectPaymentMethod = (method) => {
     setForm((f) => ({ ...f, paymentMethod: method }));
-    if (method === PAYMENT_CASH) {
+    if (method === PAYMENT_CASH || (method === PAYMENT_PNB && adminMode)) {
       setPaymentImg(null);
       setPaymentImgUrl("");
       if (fileInputRef.current) fileInputRef.current.value = "";
-    } else {
+    }
+    if (method === PAYMENT_PNB && !adminMode) {
       setCashReceivedInput("");
     }
   };
@@ -502,18 +507,18 @@ export default function Book() {
       }
     }
 
-    const needGcashProof = form.paymentMethod === PAYMENT_GCASH && paidNow > 0;
-    if (needGcashProof && !paymentImg) {
-      toast.error("Please upload your GCash receipt");
+    const needPNBProof = form.paymentMethod === PAYMENT_PNB && paidNow > 0 && !adminMode;
+    if (needPNBProof && !paymentImg) {
+      toast.error("Please upload your PNB receipt");
       return;
     }
 
-    if (form.paymentMethod === PAYMENT_CASH && form.paymentPlan !== PLAN_LATER) {
+    if ((form.paymentMethod === PAYMENT_CASH || (form.paymentMethod === PAYMENT_PNB && adminMode)) && form.paymentPlan !== PLAN_LATER) {
       const raw = String(cashReceivedInput ?? "").trim();
-      if (raw === "") return toast.error("Please enter cash received");
-      if (!Number.isFinite(cashReceivedNum)) return toast.error("Enter a valid cash amount");
+      if (raw === "") return toast.error(`Please enter ${form.paymentMethod === PAYMENT_CASH ? 'cash' : 'PNB'} received`);
+      if (!Number.isFinite(cashReceivedNum)) return toast.error("Enter a valid amount");
       if (cashReceivedNum < cashDueNow) {
-        return toast.error("Cash received is less than the amount due now");
+        return toast.error("Amount received is less than the amount due now");
       }
     }
 
@@ -558,7 +563,7 @@ export default function Book() {
       }
 
       let receiptUrl = null;
-      if (needGcashProof && paymentImg) {
+      if (needPNBProof && paymentImg) {
         receiptUrl = await new Promise((resolve, reject) => {
           const reader = new FileReader();
           reader.onload = (e) => resolve(e.target.result);
@@ -572,11 +577,11 @@ export default function Book() {
       const payStatus = resolveCustomerPayStatus(form.paymentPlan, total, amountPaidRounded);
 
       const cashReceivedRounded =
-        form.paymentMethod === PAYMENT_CASH && form.paymentPlan !== PLAN_LATER
+        (form.paymentMethod === PAYMENT_CASH || (form.paymentMethod === PAYMENT_PNB && adminMode)) && form.paymentPlan !== PLAN_LATER
           ? roundMoney(cashReceivedNum)
           : null;
       const changeRounded =
-        form.paymentMethod === PAYMENT_CASH && form.paymentPlan !== PLAN_LATER
+        (form.paymentMethod === PAYMENT_CASH || (form.paymentMethod === PAYMENT_PNB && adminMode)) && form.paymentPlan !== PLAN_LATER
           ? roundMoney(cashReceivedNum - cashDueNow)
           : null;
 
@@ -595,7 +600,7 @@ export default function Book() {
         contactNumber: String(form.contactNumber).trim(),
         email: String(form.email ?? "").trim() || null,
         userId: user.uid,
-        status: form.paymentMethod === PAYMENT_CASH ? "Approved" : "Pending",
+        status: (form.paymentMethod === PAYMENT_CASH || (form.paymentMethod === PAYMENT_PNB && adminMode)) ? "Approved" : "Pending",
         createdAt: serverTimestamp(),
         promoCode: appliedPromo?.code || null,
         paymentMethod: form.paymentMethod,
@@ -608,7 +613,7 @@ export default function Book() {
       };
 
       const bookingData =
-        form.paymentMethod === PAYMENT_GCASH
+        form.paymentMethod === PAYMENT_PNB && !adminMode
           ? { ...bookingBase, receiptUrl: receiptUrl || null }
           : {
             ...bookingBase,
@@ -637,14 +642,14 @@ export default function Book() {
         paymentPlan: form.paymentPlan,
         customerPaymentStatus: payStatus,
         method: form.paymentMethod,
-        paymentStatus: form.paymentMethod === PAYMENT_CASH ? "Approved" : "Pending",
+        paymentStatus: (form.paymentMethod === PAYMENT_CASH || (form.paymentMethod === PAYMENT_PNB && adminMode)) ? "Approved" : "Pending",
         promoCode: appliedPromo?.code || null,
         discount,
         createdAt: serverTimestamp(),
       };
 
       const paymentData =
-        form.paymentMethod === PAYMENT_GCASH
+        form.paymentMethod === PAYMENT_PNB && !adminMode
           ? { ...paymentBase, paymentImageUrl: receiptUrl || null }
           : {
             ...paymentBase,
@@ -688,7 +693,7 @@ export default function Book() {
         }
       }
 
-      const paymentMethodLabel = form.paymentMethod === PAYMENT_CASH ? "Cash" : "GCash";
+      const paymentMethodLabel = form.paymentMethod === PAYMENT_CASH ? "Cash" : "pnb";
       const paymentPlanLabel =
         form.paymentPlan === PLAN_FULL ? "Full payment" :
           form.paymentPlan === PLAN_PARTIAL ? "Down payment" : "Pay later";
@@ -771,7 +776,7 @@ export default function Book() {
                 if (fileInputRef.current) fileInputRef.current.value = "";
                 setForm((f) => ({
                   ...f,
-                  paymentMethod: PAYMENT_GCASH,
+                  paymentMethod: PAYMENT_PNB,
                   paymentPlan: PLAN_FULL,
                   contactNumber: "",
                   email: "",
@@ -881,8 +886,8 @@ export default function Book() {
                               type="button"
                               onClick={() => setForm({ ...form, courtId: c.id, timeSlot: "" })}
                               className={`rounded-xl border text-left transition-all overflow-hidden flex flex-col ${form.courtId === c.id
-                                  ? "border-green-500 bg-green-500/10"
-                                  : "border-slate-700 bg-slate-800 hover:border-slate-600"
+                                ? "border-green-500 bg-green-500/10"
+                                : "border-slate-700 bg-slate-800 hover:border-slate-600"
                                 }`}
                             >
                               {c.picture && (
@@ -1272,13 +1277,13 @@ export default function Book() {
                   <div className="grid grid-cols-2 gap-3 mb-6">
                     <button
                       type="button"
-                      onClick={() => selectPaymentMethod(PAYMENT_GCASH)}
-                      className={`flex items-center justify-center gap-2 rounded-xl border py-3.5 px-3 text-sm font-semibold min-h-[48px] transition-all ${form.paymentMethod === PAYMENT_GCASH
+                      onClick={() => selectPaymentMethod(PAYMENT_PNB)}
+                      className={`flex items-center justify-center gap-2 rounded-xl border py-3.5 px-3 text-sm font-semibold min-h-[48px] transition-all ${form.paymentMethod === PAYMENT_PNB
                         ? "border-green-500 bg-green-500/15 text-green-400"
                         : "border-slate-700 bg-slate-800/80 text-slate-400"
                         }`}
                     >
-                      <Smartphone size={18} /> GCash
+                      <Smartphone size={18} /> PNB
                     </button>
                     <button
                       type="button"
@@ -1293,22 +1298,22 @@ export default function Book() {
                   </div>
 
                   <div
-                    className={`transition-[max-height,opacity] duration-300 overflow-hidden ${form.paymentMethod === PAYMENT_GCASH ? "max-h-[2000px] opacity-100" : "max-h-0 opacity-0 pointer-events-none"
+                    className={`transition-[max-height,opacity] duration-300 overflow-hidden ${form.paymentMethod === PAYMENT_PNB && !adminMode ? "max-h-[2000px] opacity-100" : "max-h-0 opacity-0 pointer-events-none"
                       }`}
-                    aria-hidden={form.paymentMethod !== PAYMENT_GCASH}
+                    aria-hidden={form.paymentMethod !== PAYMENT_PNB || adminMode}
                   >
-                    {form.paymentMethod === PAYMENT_GCASH && (
+                    {form.paymentMethod === PAYMENT_PNB && !adminMode && (
                       <>
                         <div className="bg-green-500/5 border border-green-500/20 rounded-xl p-5 mb-5">
                           <div className="flex items-start gap-3">
                             <AlertCircle size={18} className="text-green-400 mt-0.5 shrink-0" />
                             <div className="text-sm">
-                              <p className="text-white font-medium mb-1">GCash instructions</p>
+                              <p className="text-white font-medium mb-1">PNB instructions</p>
                               {amountPaidNow <= 0 ? (
-                                <p className="text-slate-400">No GCash transfer needed for pay later.</p>
+                                <p className="text-slate-400">No PNB transfer needed for pay later.</p>
                               ) : (
                                 <ol className="text-slate-400 space-y-1 list-decimal list-inside">
-                                  <li>Open GCash on your phone</li>
+                                  <li>Open PNB on your phone</li>
                                   <li>
                                     Send <strong className="text-green-400">₱{amountPaidNow.toFixed(2)}</strong> to:{" "}
                                     <strong className="text-white">09XX-XXX-XXXX</strong>
@@ -1322,7 +1327,7 @@ export default function Book() {
                         </div>
                         {amountPaidNow > 0 && (
                           <>
-                            <label className="label">Upload GCash receipt *</label>
+                            <label className="label">Upload PNB receipt *</label>
                             <div
                               role="button"
                               tabIndex={0}
@@ -1346,7 +1351,7 @@ export default function Book() {
                               ) : (
                                 <div>
                                   <Upload size={32} className="text-slate-600 mx-auto mb-2" />
-                                  <p className="text-slate-400 text-sm">Upload GCash screenshot</p>
+                                  <p className="text-slate-400 text-sm">Upload PNB screenshot</p>
                                 </div>
                               )}
                               <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleFileChange} />
@@ -1371,24 +1376,24 @@ export default function Book() {
                   </div>
 
                   <div
-                    className={`transition-[max-height,opacity] duration-300 overflow-hidden ${form.paymentMethod === PAYMENT_CASH ? "max-h-[2000px] opacity-100" : "max-h-0 opacity-0 pointer-events-none"
+                    className={`transition-[max-height,opacity] duration-300 overflow-hidden ${form.paymentMethod === PAYMENT_CASH || (form.paymentMethod === PAYMENT_PNB && adminMode) ? "max-h-[2000px] opacity-100" : "max-h-0 opacity-0 pointer-events-none"
                       }`}
-                    aria-hidden={form.paymentMethod !== PAYMENT_CASH}
+                    aria-hidden={form.paymentMethod !== PAYMENT_CASH && !(form.paymentMethod === PAYMENT_PNB && adminMode)}
                   >
-                    {form.paymentMethod === PAYMENT_CASH && (
+                    {(form.paymentMethod === PAYMENT_CASH || (form.paymentMethod === PAYMENT_PNB && adminMode)) && (
                       <div className="space-y-5">
-                        <div className="bg-amber-500/5 border border-amber-500/20 rounded-xl p-5">
-                          <p className="text-white font-medium text-sm mb-1">Cash</p>
+                        <div className={`bg-${form.paymentMethod === PAYMENT_CASH ? 'amber' : 'green'}-500/5 border border-${form.paymentMethod === PAYMENT_CASH ? 'amber' : 'green'}-500/20 rounded-xl p-5`}>
+                          <p className="text-white font-medium text-sm mb-1">{form.paymentMethod === PAYMENT_CASH ? 'Cash' : 'PNB'}</p>
                           <p className="text-slate-300 text-sm">
                             {form.paymentPlan === PLAN_LATER
-                              ? "You will pay in cash at the facility before play."
-                              : `Bring cash — amount due now: ₱${cashDueNow.toFixed(2)} (total booking ₱${total.toFixed(2)})`}
+                              ? `You will pay in ${form.paymentMethod === PAYMENT_CASH ? 'cash' : 'PNB'} at the facility before play.`
+                              : `Bring ${form.paymentMethod === PAYMENT_CASH ? 'cash' : 'PNB'} — amount due now: ₱${cashDueNow.toFixed(2)} (total booking ₱${total.toFixed(2)})`}
                           </p>
                         </div>
                         {form.paymentPlan !== PLAN_LATER && (
                           <div className="grid sm:grid-cols-2 gap-4">
                             <div>
-                              <label className="label">Cash received *</label>
+                              <label className="label">{form.paymentMethod === PAYMENT_CASH ? 'Cash' : 'PNB'} received *</label>
                               <div className="relative">
                                 <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 text-sm"></span>
                                 <input
@@ -1597,7 +1602,7 @@ export default function Book() {
                       ? "💡 Pay later: settle at the desk before your slot."
                       : form.paymentMethod === PAYMENT_CASH
                         ? "💡 Cash: pay at facility; booking stays pending until approved."
-                        : "💡 GCash: pending until staff confirms your transfer."}
+                        : "💡 PNB: pending until staff confirms your transfer."}
                   </p>
                 </div>
               </div>
