@@ -133,13 +133,14 @@ export default function Book() {
   const { markDirty, markClean } = useUnsavedChanges();
 
   const [form, setForm] = useState({
-    courtId: courtParam || "",
+    courtIds: courtParam ? [courtParam] : [],
     date: format(addDays(new Date(), 1), "yyyy-MM-dd"),
     timeSlot: "",
     customStartTime: "",
     isCustomTime: false,
     duration: 1,
     customDuration: "",
+    customEndTime: "",
     players: 2,
     equipment: [],
     notes: "",
@@ -148,10 +149,46 @@ export default function Book() {
     email: "",
     paymentMethod: PAYMENT_PNB,
     paymentPlan: PLAN_FULL,
+    bookingMode: "one-time",
+    recurrenceEnd: format(addDays(new Date(), 30), "yyyy-MM-dd"),
+    recurringDays: [new Date(addDays(new Date(), 1)).getDay()],
+    repeatDurationValue: 1,
+    repeatDurationUnit: "months"
   });
 
-  const actualDuration = form.duration === "Custom" ? Number(form.customDuration) || 1 : form.duration;
+  const [sessionPreviewList, setSessionPreviewList] = useState([]);
+  const [previewLoading, setPreviewLoading] = useState(false);
+
   const actualTimeSlot = form.isCustomTime ? format24to12(form.customStartTime) : form.timeSlot;
+
+  const actualDuration = useMemo(() => {
+    if (form.duration !== "Custom") return form.duration;
+    if (form.customEndTime && actualTimeSlot) {
+      const parseTimeToMs = (timeStr) => {
+        if (!timeStr) return 0;
+        const parts = timeStr.match(/(\d+):(\d+)\s+(AM|PM)/i);
+        if (parts) {
+          let h = parseInt(parts[1], 10);
+          let m = parseInt(parts[2], 10);
+          if (h === 12) h = 0;
+          if (parts[3].toUpperCase() === "PM") h += 12;
+          return h * 60 + m;
+        }
+        const p = timeStr.split(":");
+        if (p.length === 2) {
+          return parseInt(p[0], 10) * 60 + parseInt(p[1], 10);
+        }
+        return 0;
+      };
+      const startMs = parseTimeToMs(actualTimeSlot);
+      const endMs = parseTimeToMs(form.customEndTime);
+      let diff = endMs - startMs;
+      if (diff < 0) diff += 24 * 60;
+      return diff / 60;
+    }
+    return Number(form.customDuration) || 1;
+  }, [form.duration, form.customDuration, form.customEndTime, actualTimeSlot]);
+
   const calculatedEndTime = (actualTimeSlot && actualDuration > 0) ? calculateEndTime(actualTimeSlot, actualDuration) : "";
 
   const activeCourts = useMemo(
@@ -159,19 +196,23 @@ export default function Book() {
     [courts]
   );
 
-  const court = useMemo(() => {
-    const raw = activeCourts.find((c) => c.id === form.courtId);
-    if (!raw) return null;
-    return {
-      id: raw.id,
-      name: raw.name || "Court",
-      price: Number(raw.pricePerHour) || 0,
-      type: deriveCourtKind(raw),
-      activeStartTime: raw.activeStartTime,
-      activeEndTime: raw.activeEndTime,
-      rawCourt: raw,
-    };
-  }, [activeCourts, form.courtId]);
+  const selectedCourtsList = useMemo(() => {
+    return form.courtIds.map((id) => {
+      const raw = activeCourts.find((c) => c.id === id);
+      if (!raw) return null;
+      return {
+        id: raw.id,
+        name: raw.name || "Court",
+        price: Number(raw.pricePerHour) || 0,
+        type: deriveCourtKind(raw),
+        activeStartTime: raw.activeStartTime,
+        activeEndTime: raw.activeEndTime,
+        rawCourt: raw,
+      };
+    }).filter(Boolean);
+  }, [activeCourts, form.courtIds]);
+
+  const court = selectedCourtsList.length > 0 ? selectedCourtsList[0] : null;
 
   useEffect(() => {
     const unsub = onSnapshot(
@@ -197,11 +238,11 @@ export default function Book() {
     if (bookableCourts.length === 0) return;
     setForm((f) => {
       if (courtParam && bookableCourts.some((c) => c.id === courtParam)) {
-        if (f.courtId === courtParam) return f;
-        return { ...f, courtId: courtParam, timeSlot: "" };
+        if (f.courtIds.includes(courtParam)) return f;
+        return { ...f, courtIds: [courtParam], timeSlot: "" };
       }
-      if (bookableCourts.some((c) => c.id === f.courtId)) return f;
-      return { ...f, courtId: bookableCourts[0].id, timeSlot: "" };
+      if (f.courtIds.length > 0 && bookableCourts.some((c) => f.courtIds.includes(c.id))) return f;
+      return { ...f, courtIds: [bookableCourts[0].id], timeSlot: "" };
     });
   }, [activeCourts, courtParam]);
 
@@ -222,11 +263,10 @@ export default function Book() {
   }, [tournaments, form.date]);
 
   const loadDayBookings = useCallback(async () => {
-    if (!form.courtId) return;
+    if (form.courtIds.length === 0) return;
     try {
       const q = query(
         collection(db, "bookings"),
-        where("courtId", "==", form.courtId),
         where("date", "==", form.date),
         where("status", "in", ["pending", "approved", "Pending", "Approved"])
       );
@@ -235,26 +275,27 @@ export default function Book() {
         const data = d.data();
         return {
           id: d.id,
+          courtId: data.courtId,
           timeSlot: data.timeSlot,
           startTime: data.startTime || data.timeSlot,
           duration: Number(data.duration) || 1,
           status: data.status,
         };
-      });
+      }).filter(b => form.courtIds.includes(b.courtId));
       setDayBookings(list);
     } catch {
       setDayBookings([]);
     }
-  }, [form.courtId, form.date]);
+  }, [form.courtIds, form.date]);
 
   useEffect(() => {
     if (!user) {
       if (!adminMode) navigate("/login");
       return;
     }
-    if (!form.courtId) return;
+    if (form.courtIds.length === 0) return;
     loadDayBookings();
-  }, [form.courtId, form.date, user, adminMode, navigate, loadDayBookings]);
+  }, [form.courtIds, form.date, user, adminMode, navigate, loadDayBookings]);
 
   /**
    * Real-time add-ons from `inventoryItems`.
@@ -395,11 +436,20 @@ export default function Book() {
     () => rentalAddOns.filter((e) => form.equipment.includes(e.id)),
     [rentalAddOns, form.equipment]
   );
+  const sessionCount = useMemo(() => {
+    if (form.bookingMode === "one-time") return 1;
+    if (sessionPreviewList.length === 0) return 0;
+    const validSessions = sessionPreviewList.filter(s => s.isAvailable === true).length;
+    if (validSessions > 0) return validSessions;
+    if (!actualTimeSlot) return sessionPreviewList.length;
+    return 0;
+  }, [form.bookingMode, sessionPreviewList, actualTimeSlot]);
+
   const equipmentTotal = useMemo(
-    () => equipmentItems.reduce((s, e) => s + getRentalItemPrice(e), 0),
-    [equipmentItems]
+    () => equipmentItems.reduce((s, e) => s + getRentalItemPrice(e), 0) * sessionCount,
+    [equipmentItems, sessionCount]
   );
-  const courtTotal = (court?.price ?? 0) * actualDuration;
+  const courtTotal = selectedCourtsList.reduce((sum, c) => sum + (c.price * actualDuration), 0) * sessionCount;
   const subtotal = courtTotal + equipmentTotal;
   const discount = appliedPromo ? subtotal * appliedPromo.discount : 0;
   const total = subtotal - discount;
@@ -424,6 +474,114 @@ export default function Book() {
     if (form.paymentPlan === PLAN_LATER) return 0;
     return roundMoney(amountPaidNow);
   }, [form.paymentPlan, amountPaidNow]);
+
+  const generatedDatesPreview = useMemo(() => {
+    if (form.bookingMode === "one-time") return [form.date];
+    const dates = [];
+    
+    // Parse manually to avoid UTC midnight parsing issues in different browsers
+    const [sY, sM, sD] = form.date.split("-").map(Number);
+    if (!sY || !sM || !sD) return [];
+    let current = new Date(sY, sM - 1, sD, 12, 0, 0); // Noon local time
+    
+    const [eY, eM, eD] = form.recurrenceEnd.split("-").map(Number);
+    if (!eY || !eM || !eD) return [];
+    const end = new Date(eY, eM - 1, eD, 12, 0, 0); // Noon local time
+    
+    // Safety limit 365 days
+    let iterations = 0;
+    while (current <= end && iterations < 365) {
+      if (form.recurringDays.includes(current.getDay())) {
+        const y = current.getFullYear();
+        const m = String(current.getMonth() + 1).padStart(2, '0');
+        const d = String(current.getDate()).padStart(2, '0');
+        dates.push(`${y}-${m}-${d}`);
+      }
+      current.setDate(current.getDate() + 1);
+      iterations++;
+    }
+    return dates;
+  }, [form.date, form.recurrenceEnd, form.recurringDays, form.bookingMode]);
+
+  useEffect(() => {
+    if (form.bookingMode !== "recurring" || !adminMode) {
+      setSessionPreviewList([]);
+      return;
+    }
+    
+    let isSubscribed = true;
+    setPreviewLoading(true);
+
+    const checkAvailability = async () => {
+      try {
+        const dur = actualDuration || 1;
+        
+        let allBookingsForDates = [];
+        if (court && generatedDatesPreview.length > 0) {
+           const chunks = [];
+           for (let i = 0; i < generatedDatesPreview.length; i += 30) {
+               chunks.push(generatedDatesPreview.slice(i, i + 30));
+           }
+           const bookingsPromises = chunks.map(chunk => {
+               const q = query(
+                 collection(db, "bookings"),
+                 where("courtId", "==", court.id),
+                 where("date", "in", chunk)
+               );
+               return getDocs(q);
+           });
+           const snapshots = await Promise.all(bookingsPromises);
+           snapshots.forEach(snap => {
+               snap.docs.forEach(d => {
+                 const data = d.data();
+                 if (["pending", "approved", "Pending", "Approved"].includes(data.status)) {
+                   allBookingsForDates.push({ id: d.id, ...data });
+                 }
+               });
+           });
+        }
+        
+        const preview = generatedDatesPreview.map(dateStr => {
+          if (!actualTimeSlot) {
+            return { date: dateStr, isAvailable: null, reason: "Select start time" };
+          }
+          
+          const inPast = isSlotInPast(dateStr, actualTimeSlot);
+          if (inPast) {
+            return { date: dateStr, isAvailable: false, reason: "Past date/time" };
+          }
+          
+          const outOfHours = !isSlotWithinCourtHours(actualTimeSlot, dur, court);
+          if (outOfHours) {
+            return { date: dateStr, isAvailable: false, reason: "Outside operating hours" };
+          }
+          
+          const dayBookings = allBookingsForDates.filter(b => b.date === dateStr);
+          const isTaken = !isSlotStartAvailableForDuration(actualTimeSlot, dur, dayBookings) || !isCourtActiveDuringSlot(court?.rawCourt, dateStr, actualTimeSlot, dur);
+          
+          if (isTaken) {
+             return { date: dateStr, isAvailable: false, reason: "Already booked or inactive" };
+          }
+          
+          return { date: dateStr, isAvailable: true, reason: "" };
+        });
+        
+        if (isSubscribed) {
+          setSessionPreviewList(preview);
+        }
+      } catch (err) {
+        console.error("Preview error", err);
+      } finally {
+        if (isSubscribed) setPreviewLoading(false);
+      }
+    };
+
+    const timeout = setTimeout(checkAvailability, 300);
+    return () => {
+      isSubscribed = false;
+      clearTimeout(timeout);
+    };
+  }, [generatedDatesPreview, actualTimeSlot, actualDuration, court, adminMode, form.bookingMode]);
   const cashReceivedNum = useMemo(
     () => parseCashAmount(cashReceivedInput),
     [cashReceivedInput]
@@ -484,9 +642,9 @@ export default function Book() {
   };
 
   const handleSubmit = async () => {
-    if (!court) return toast.error("Please select a court");
-    if (!court.price || court.price <= 0) {
-      return toast.error("This court has no hourly rate set. Ask admin to update court pricing.");
+    if (selectedCourtsList.length === 0) return toast.error("Please select a court");
+    if (selectedCourtsList.some(c => !c.price || c.price <= 0)) {
+      return toast.error("One or more selected courts have no hourly rate set. Ask admin to update court pricing.");
     }
     if (!actualTimeSlot) return toast.error("Please select a time slot");
     if (!form.playerName) return toast.error("Player name is required");
@@ -527,7 +685,6 @@ export default function Book() {
       const confSnap = await getDocs(
         query(
           collection(db, "bookings"),
-          where("courtId", "==", form.courtId),
           where("date", "==", form.date),
           where("status", "in", ["pending", "approved", "Pending", "Approved"])
         )
@@ -536,30 +693,32 @@ export default function Book() {
         const data = d.data();
         return {
           id: d.id,
+          courtId: data.courtId,
           timeSlot: data.timeSlot,
           startTime: data.startTime || data.timeSlot,
           duration: Number(data.duration) || 1,
           status: data.status,
         };
-      });
+      }).filter(b => form.courtIds.includes(b.courtId));
       if (!isSlotStartAvailableForDuration(actualTimeSlot, actualDuration, latestDay)) {
         setDayBookings(latestDay);
-        toast.error("That time is no longer available. Please choose another slot.");
+        toast.error("That time is no longer available for one or more selected courts.");
         return;
       }
 
-      if (!isCourtActiveDuringSlot(court?.rawCourt, form.date, actualTimeSlot, actualDuration)) {
-        toast.error("That time is unavailable due to a scheduled court deactivation.");
-        return;
-      }
-
-      if (!isSlotWithinCourtHours(actualTimeSlot, actualDuration, court)) {
-        toast.error(`The selected time is outside the court's operating hours (${court.activeStartTime || "06:00"} - ${court.activeEndTime || "22:00"}).`);
-        return;
-      }
-      if (court && court.rawCourt && !getEffectiveCourtStatus(court.rawCourt)) {
-        toast.error("This court is currently unavailable for rent.");
-        return;
+      for (const c of selectedCourtsList) {
+        if (!isCourtActiveDuringSlot(c.rawCourt, form.date, actualTimeSlot, actualDuration)) {
+          toast.error(`That time is unavailable for ${c.name} due to a scheduled deactivation.`);
+          return;
+        }
+        if (!isSlotWithinCourtHours(actualTimeSlot, actualDuration, c)) {
+          toast.error(`The selected time is outside the operating hours for ${c.name} (${c.activeStartTime || "06:00"} - ${c.activeEndTime || "22:00"}).`);
+          return;
+        }
+        if (!getEffectiveCourtStatus(c.rawCourt)) {
+          toast.error(`${c.name} is currently unavailable for rent.`);
+          return;
+        }
       }
 
       let receiptUrl = null;
@@ -572,105 +731,123 @@ export default function Book() {
         });
       }
 
+      const numCourts = selectedCourtsList.length;
       const amountPaidRounded = roundMoney(paidNow);
-      const remainingRounded = resolveRemaining(total, amountPaidRounded);
-      const payStatus = resolveCustomerPayStatus(form.paymentPlan, total, amountPaidRounded);
+      const splitTotal = roundMoney(total / numCourts);
+      const splitAmountPaidNow = roundMoney(paidNow / numCourts);
+      const splitRemaining = resolveRemaining(splitTotal, splitAmountPaidNow);
+      const splitDiscount = roundMoney(discount / numCourts);
 
-      const cashReceivedRounded =
+      const splitCashReceived =
         (form.paymentMethod === PAYMENT_CASH || (form.paymentMethod === PAYMENT_PNB && adminMode)) && form.paymentPlan !== PLAN_LATER
-          ? roundMoney(cashReceivedNum)
+          ? roundMoney(cashReceivedNum / numCourts)
           : null;
-      const changeRounded =
+      const splitChange =
         (form.paymentMethod === PAYMENT_CASH || (form.paymentMethod === PAYMENT_PNB && adminMode)) && form.paymentPlan !== PLAN_LATER
-          ? roundMoney(cashReceivedNum - cashDueNow)
+          ? roundMoney((cashReceivedNum - cashDueNow) / numCourts)
           : null;
 
-      const bookingBase = {
-        courtId: form.courtId,
-        courtName: court.name,
-        date: form.date,
-        timeSlot: actualTimeSlot,
-        startTime: actualTimeSlot,
-        endTime: calculatedEndTime,
-        duration: actualDuration,
-        players: form.players,
-        equipment: form.equipment,
-        notes: form.notes,
-        playerName: form.playerName,
-        contactNumber: String(form.contactNumber).trim(),
-        email: String(form.email ?? "").trim() || null,
-        userId: user.uid,
-        status: (form.paymentMethod === PAYMENT_CASH || (form.paymentMethod === PAYMENT_PNB && adminMode)) ? "Approved" : "Pending",
-        createdAt: serverTimestamp(),
-        promoCode: appliedPromo?.code || null,
-        paymentMethod: form.paymentMethod,
-        paymentPlan: form.paymentPlan,
-        hourlyRate: roundMoney(court.price),
-        totalAmount: roundMoney(total),
-        amountPaid: amountPaidRounded,
-        remainingBalance: remainingRounded,
-        customerPaymentStatus: payStatus,
-      };
+      const writePromises = [];
+      let firstBookingRefId = null;
+      let firstBookingData = null;
 
-      const bookingData =
-        form.paymentMethod === PAYMENT_PNB && !adminMode
-          ? { ...bookingBase, receiptUrl: receiptUrl || null }
-          : {
-            ...bookingBase,
-            receiptUrl: null,
-            cashReceived: cashReceivedRounded,
-            change: changeRounded,
-          };
+      for (const c of selectedCourtsList) {
+        const payStatus = resolveCustomerPayStatus(form.paymentPlan, splitTotal, splitAmountPaidNow);
 
-      const bookingRef = doc(collection(db, "bookings"));
-      const paymentRef = doc(collection(db, "payments"));
+        const bookingBase = {
+          courtId: c.id,
+          courtName: c.name,
+          date: form.date,
+          timeSlot: actualTimeSlot,
+          startTime: actualTimeSlot,
+          endTime: calculatedEndTime,
+          duration: actualDuration,
+          players: form.players,
+          equipment: form.equipment,
+          notes: form.notes,
+          playerName: form.playerName,
+          contactNumber: String(form.contactNumber).trim(),
+          email: String(form.email ?? "").trim() || null,
+          userId: user.uid,
+          status: (form.paymentMethod === PAYMENT_CASH || (form.paymentMethod === PAYMENT_PNB && adminMode)) ? "Approved" : "Pending",
+          createdAt: serverTimestamp(),
+          promoCode: appliedPromo?.code || null,
+          paymentMethod: form.paymentMethod,
+          paymentPlan: form.paymentPlan,
+          hourlyRate: roundMoney(c.price),
+          totalAmount: splitTotal,
+          amountPaid: splitAmountPaidNow,
+          remainingBalance: splitRemaining,
+          customerPaymentStatus: payStatus,
+        };
 
-      const paymentBase = {
-        bookingId: bookingRef.id,
-        userId: user.uid,
-        name: form.playerName,
-        courtId: form.courtId,
-        courtName: court.name,
-        date: form.date,
-        timeSlot: actualTimeSlot,
-        startTime: actualTimeSlot,
-        endTime: calculatedEndTime,
-        amount: roundMoney(total),
-        totalAmount: roundMoney(total),
-        amountPaid: amountPaidRounded,
-        remainingBalance: remainingRounded,
-        paymentPlan: form.paymentPlan,
-        customerPaymentStatus: payStatus,
-        method: form.paymentMethod,
-        paymentStatus: (form.paymentMethod === PAYMENT_CASH || (form.paymentMethod === PAYMENT_PNB && adminMode)) ? "Approved" : "Pending",
-        promoCode: appliedPromo?.code || null,
-        discount,
-        createdAt: serverTimestamp(),
-      };
+        const bookingData =
+          form.paymentMethod === PAYMENT_PNB && !adminMode
+            ? { ...bookingBase, receiptUrl: receiptUrl || null }
+            : {
+              ...bookingBase,
+              receiptUrl: null,
+              cashReceived: splitCashReceived,
+              change: splitChange,
+            };
 
-      const paymentData =
-        form.paymentMethod === PAYMENT_PNB && !adminMode
-          ? { ...paymentBase, paymentImageUrl: receiptUrl || null }
-          : {
-            ...paymentBase,
-            paymentImageUrl: null,
-            cashReceived: cashReceivedRounded,
-            change: changeRounded,
-          };
+        const bookingRef = doc(collection(db, "bookings"));
+        if (!firstBookingRefId) {
+          firstBookingRefId = bookingRef.id;
+          firstBookingData = bookingData;
+        }
+        const paymentRef = doc(collection(db, "payments"));
 
-      const writePromises = Promise.all([
-        setDoc(bookingRef, bookingData),
-        setDoc(paymentRef, paymentData),
+        const paymentBase = {
+          bookingId: bookingRef.id,
+          userId: user.uid,
+          name: form.playerName,
+          courtId: c.id,
+          courtName: c.name,
+          date: form.date,
+          timeSlot: actualTimeSlot,
+          startTime: actualTimeSlot,
+          endTime: calculatedEndTime,
+          amount: splitTotal,
+          totalAmount: splitTotal,
+          amountPaid: splitAmountPaidNow,
+          remainingBalance: splitRemaining,
+          paymentPlan: form.paymentPlan,
+          customerPaymentStatus: payStatus,
+          method: form.paymentMethod,
+          paymentStatus: (form.paymentMethod === PAYMENT_CASH || (form.paymentMethod === PAYMENT_PNB && adminMode)) ? "Approved" : "Pending",
+          promoCode: appliedPromo?.code || null,
+          discount: splitDiscount,
+          createdAt: serverTimestamp(),
+        };
+
+        const paymentData =
+          form.paymentMethod === PAYMENT_PNB && !adminMode
+            ? { ...paymentBase, paymentImageUrl: receiptUrl || null }
+            : {
+              ...paymentBase,
+              paymentImageUrl: null,
+              cashReceived: splitCashReceived,
+              change: splitChange,
+            };
+
+        writePromises.push(setDoc(bookingRef, bookingData));
+        writePromises.push(setDoc(paymentRef, paymentData));
+      }
+
+      writePromises.push(
         upsertCustomerAfterBooking(db, {
           userId: user.uid,
           fullName: form.playerName,
           contactNumber: String(form.contactNumber).trim(),
           email: String(form.email ?? "").trim() || null,
-          amountApplied: amountPaidRounded,
+          amountApplied: amountPaidRounded, // total amount paid across all courts
         })
-      ]);
+      );
 
-      await wrapSync(writePromises, {
+      const writePromiseAll = Promise.all(writePromises);
+
+      await wrapSync(writePromiseAll, {
         successMsg: "RANAW PICKLEBALL COURT booking confirmed successfully",
         offlineMsg: "Saved Offline — Will Sync Automatically",
         errorMsg: "Booking Failed — Retry",
@@ -685,9 +862,9 @@ export default function Book() {
       });
 
       if (adminMode && String(form.contactNumber).trim()) {
-        const smsMsg = `Assalamu alaikum! RANAW PICKLEBALL COURT: Your booking has been confirmed for ${form.date} at ${actualTimeSlot}. Court ${court?.name || form.courtId}. Please arrive 15 minutes before your scheduled time. Shukran!!!.`;
+        const smsMsg = `Assalamu alaikum! RANAW PICKLEBALL COURT: Your booking has been confirmed for ${form.date} at ${actualTimeSlot}. Courts: ${selectedCourtsList.map((c) => c.name).join(", ")}. Please arrive 15 minutes before your scheduled time. Shukran!!!.`;
         try {
-          await sendBookingSMS(bookingRef.id, String(form.contactNumber).trim(), smsMsg);
+          await sendBookingSMS(firstBookingRefId, String(form.contactNumber).trim(), smsMsg);
         } catch (e) {
           console.error("Failed to send admin booking SMS:", e);
         }
@@ -699,21 +876,21 @@ export default function Book() {
           form.paymentPlan === PLAN_PARTIAL ? "Down payment" : "Pay later";
 
       setReceiptSnapshot({
-        booking: { ...bookingData, id: bookingRef.id },
-        transactionId: bookingRef.id,
+        booking: { ...firstBookingData, id: firstBookingRefId },
+        transactionId: firstBookingRefId,
         date: form.date,
         timeSlot: form.timeSlot,
-        courtName: court.name,
+        courtName: selectedCourtsList.map((c) => c.name).join(", "),
         duration: form.duration,
         playerName: form.playerName,
         paymentMethodLabel,
         paymentPlanLabel,
         totalAmount: roundMoney(total),
         amountPaid: amountPaidRounded,
-        remainingBalance: remainingRounded,
+        remainingBalance: resolveRemaining(total, amountPaidRounded),
         change:
-          form.paymentMethod === PAYMENT_CASH && form.paymentPlan !== PLAN_LATER ? changeRounded : null,
-        customerPayStatus: payStatus,
+          form.paymentMethod === PAYMENT_CASH && form.paymentPlan !== PLAN_LATER ? roundMoney(cashReceivedNum - cashDueNow) : null,
+        customerPayStatus: resolveCustomerPayStatus(form.paymentPlan, total, amountPaidRounded),
       });
 
     } catch (err) {
@@ -884,8 +1061,19 @@ export default function Book() {
                             <button
                               key={c.id}
                               type="button"
-                              onClick={() => setForm({ ...form, courtId: c.id, timeSlot: "" })}
-                              className={`rounded-xl border text-left transition-all overflow-hidden flex flex-col ${form.courtId === c.id
+                              onClick={() => {
+                                if (adminMode) {
+                                  setForm(f => {
+                                    const exists = f.courtIds.includes(c.id);
+                                    let newIds = exists ? f.courtIds.filter(id => id !== c.id) : [...f.courtIds, c.id];
+                                    if (newIds.length === 0) newIds = [c.id]; // Prevent empty selection
+                                    return { ...f, courtIds: newIds, timeSlot: "" };
+                                  });
+                                } else {
+                                  setForm({ ...form, courtIds: [c.id], timeSlot: "" });
+                                }
+                              }}
+                              className={`rounded-xl border text-left transition-all overflow-hidden flex flex-col ${form.courtIds.includes(c.id)
                                 ? "border-green-500 bg-green-500/10"
                                 : "border-slate-700 bg-slate-800 hover:border-slate-600"
                                 }`}
@@ -899,7 +1087,7 @@ export default function Book() {
                                 <div>
                                   <div className="flex items-center justify-between mb-1">
                                     <span className="text-white font-medium text-sm">{c.name}</span>
-                                    {form.courtId === c.id && <Check size={14} className="text-green-400" />}
+                                    {form.courtIds.includes(c.id) && <Check size={14} className="text-green-400" />}
                                   </div>
                                   <span className={`text-xs px-2 py-0.5 rounded-full inline-block mr-1 ${kindClass}`}>
                                     {kind}
@@ -1013,50 +1201,33 @@ export default function Book() {
 
                   {/* Date & Time */}
                   <div className="card p-6">
-                    <h3 className="text-white font-semibold mb-4 flex items-center gap-2">
-                      <Clock size={18} className="text-green-400" /> Date & Time
-                    </h3>
-                    <div className="grid sm:grid-cols-2 gap-4 mb-5">
-                      <div>
-                        <label className="label">Date</label>
-                        <input
-                          type="date"
-                          className="input-field"
-                          min={minDate}
-                          max={maxDate}
-                          value={form.date}
-                          onChange={(e) => setForm({ ...form, date: e.target.value, timeSlot: "", customStartTime: "" })}
-                        />
+                    {adminMode && (
+                      <div className="flex bg-slate-900 rounded-xl p-1 mb-6">
+                        <button
+                          type="button"
+                          onClick={() => setForm(f => ({ ...f, bookingMode: "one-time" }))}
+                          className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-lg text-sm font-medium transition-all ${
+                            form.bookingMode === "one-time" 
+                              ? "bg-slate-800 border border-slate-700 text-white shadow" 
+                              : "text-slate-400 hover:text-slate-200"
+                          }`}
+                        >
+                          <Calendar size={16} /> One-Time
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setForm(f => ({ ...f, bookingMode: "recurring" }))}
+                          className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-lg text-sm font-medium transition-all ${
+                            form.bookingMode === "recurring" 
+                              ? "bg-green-500/10 text-green-400 border border-green-500/20 shadow" 
+                              : "text-slate-400 hover:text-slate-200"
+                          }`}
+                        >
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 21v-5h5"/></svg>
+                          Recurring
+                        </button>
                       </div>
-
-                      {!isTournamentDay && (
-                        <div>
-                          <label className="label">Duration</label>
-                          <div className="flex gap-2">
-                            <select
-                              className="input-field"
-                              value={form.duration}
-                              onChange={(e) => setForm({ ...form, duration: e.target.value === "Custom" ? "Custom" : Number(e.target.value) })}
-                            >
-                              {DURATIONS.map((d) => (
-                                <option key={d} value={d}>{d} {d === 1 ? "hour" : (d === "Custom" ? "" : "hours")}</option>
-                              ))}
-                            </select>
-                            {form.duration === "Custom" && (
-                              <input
-                                type="number"
-                                step="0.25"
-                                min="0.25"
-                                className="input-field w-24"
-                                placeholder="Hours"
-                                value={form.customDuration}
-                                onChange={(e) => setForm({ ...form, customDuration: e.target.value })}
-                              />
-                            )}
-                          </div>
-                        </div>
-                      )}
-                    </div>
+                    )}
 
                     {isTournamentDay ? (
                       <div className="bg-amber-500/10 border border-amber-500/50 p-6 rounded-xl text-center mb-6">
@@ -1068,77 +1239,353 @@ export default function Book() {
                       </div>
                     ) : (
                       <>
+                        {form.bookingMode === "one-time" ? (
+                          <>
+                            <h3 className="text-white font-semibold mb-4 flex items-center gap-2">
+                              <Clock size={18} className="text-green-400" /> Date & Time
+                            </h3>
+                            <div className="grid sm:grid-cols-2 gap-4 mb-5">
+                              <div>
+                                <label className="label uppercase text-xs tracking-wider text-slate-400 mb-2 block">Date</label>
+                                <div className="relative">
+                                  <input
+                                    type="date"
+                                    className="input-field py-3 appearance-none"
+                                    min={minDate}
+                                    max={maxDate}
+                                    value={form.date}
+                                    onChange={(e) => {
+                                      const d = e.target.value;
+                                      if (!d) return;
+                                      const day = new Date(d).getDay();
+                                      setForm(f => {
+                                        const next = { ...f, date: d, timeSlot: "", customStartTime: "" };
+                                        if (f.bookingMode === "recurring" && !f.recurringDays.includes(day)) {
+                                          next.recurringDays = [day];
+                                        }
+                                        return next;
+                                      });
+                                    }}
+                                  />
+                                </div>
+                              </div>
+                              <div>
+                                <label className="label uppercase text-xs tracking-wider text-slate-400 mb-2 block">Duration</label>
+                                <div className="relative">
+                                  <select
+                                    className="input-field appearance-none py-3"
+                                    value={form.duration}
+                                    onChange={(e) => setForm({ ...form, duration: e.target.value === "Custom" ? "Custom" : Number(e.target.value) })}
+                                  >
+                                    {DURATIONS.map((d) => (
+                                      <option key={d} value={d}>{d} {d === 1 ? "hour" : (d === "Custom" ? "" : "hours")}</option>
+                                    ))}
+                                  </select>
+                                </div>
+                                {form.duration === "Custom" && (
+                                  <input
+                                    type="time"
+                                    className="input-field mt-2"
+                                    value={form.customEndTime}
+                                    onChange={e => setForm({...form, customEndTime: e.target.value})}
+                                  />
+                                )}
+                              </div>
+                            </div>
 
-                        <div className="flex items-center justify-between mb-2">
-                          <label className="label mb-0">Start Time</label>
-                          {adminMode && (
-                            <label className="flex items-center gap-2 text-sm text-slate-400 cursor-pointer">
-                              <input
-                                type="checkbox"
-                                checked={form.isCustomTime}
-                                onChange={(e) => setForm({ ...form, isCustomTime: e.target.checked, timeSlot: "", customStartTime: "" })}
-                                className="rounded border-slate-700 bg-slate-800 text-green-500 focus:ring-green-500"
-                              />
-                              Custom Time
-                            </label>
-                          )}
-                        </div>
+                            <div className="flex items-center justify-between mb-3 mt-2">
+                              <label className="label uppercase text-xs tracking-wider text-slate-400 mb-0 block">Start Time</label>
+                              {adminMode && (
+                                <label className="flex items-center gap-2 text-sm text-slate-400 cursor-pointer">
+                                  <input
+                                    type="checkbox"
+                                    checked={form.isCustomTime}
+                                    onChange={(e) => setForm({ ...form, isCustomTime: e.target.checked, timeSlot: "", customStartTime: "" })}
+                                    className="rounded border-slate-700 bg-slate-800 text-slate-400 focus:ring-slate-500 w-4 h-4"
+                                  />
+                                  Custom Time
+                                </label>
+                              )}
+                            </div>
 
-                        {form.isCustomTime ? (
-                          <div className="mb-4">
-                            <input
-                              type="time"
-                              className="input-field max-w-[200px]"
-                              value={form.customStartTime}
-                              onChange={(e) => setForm({ ...form, customStartTime: e.target.value })}
-                            />
-                          </div>
+                            <div className="relative mb-2">
+                              {form.isCustomTime ? (
+                                <input
+                                  type="time"
+                                  className="input-field max-w-[200px]"
+                                  value={form.customStartTime}
+                                  onChange={(e) => setForm({ ...form, customStartTime: e.target.value })}
+                                />
+                              ) : (
+                                <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
+                                  {TIME_SLOTS.map((slot) => {
+                                    const inPast = isSlotInPast(form.date, slot);
+                                    const isTaken = !inPast && (!isSlotStartAvailableForDuration(
+                                      slot,
+                                      actualDuration,
+                                      dayBookings
+                                    ) || !isCourtActiveDuringSlot(court?.rawCourt, form.date, slot, actualDuration));
+                                    const outOfHours = !isSlotWithinCourtHours(slot, actualDuration, court);
+                                    const isUnavailable = inPast || isTaken || outOfHours;
+
+                                    return (
+                                      <button
+                                        key={slot}
+                                        type="button"
+                                        disabled={isUnavailable}
+                                        onClick={() => setForm({ ...form, timeSlot: slot })}
+                                        className={`py-3 px-1 rounded-xl text-xs font-medium transition-all ${isUnavailable ? "bg-red-500/10 border border-red-500/20 text-red-400/50 cursor-not-allowed" :
+                                          form.timeSlot === slot ? "bg-slate-700 text-white" :
+                                            "bg-slate-800 text-slate-400 hover:bg-slate-700 hover:text-white border border-slate-700"
+                                          }`}
+                                      >
+                                        {slot}
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                              )}
+                            </div>
+                            {!form.isCustomTime && (
+                              <div className="text-sm text-slate-500 mt-3">
+                                <p>Booked = this time slot is already reserved. Conflicts = this start time would overlap an existing booking for the selected duration.</p>
+                              </div>
+                            )}
+                          </>
                         ) : (
                           <>
-                            <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
-                              {TIME_SLOTS.map((slot) => {
-                                const inPast = isSlotInPast(form.date, slot);
-                                const isSlotOccupied = !isSlotStartAvailableForDuration(slot, 0.25, dayBookings) || !isCourtActiveDuringSlot(court?.rawCourt, form.date, slot, 0.25);
-                                const isTaken = !inPast && (!isSlotStartAvailableForDuration(
-                                  slot,
-                                  actualDuration,
-                                  dayBookings
-                                ) || !isCourtActiveDuringSlot(court?.rawCourt, form.date, slot, actualDuration));
-                                const outOfHours = !isSlotWithinCourtHours(slot, actualDuration, court);
-                                const isOverlap = isTaken && !isSlotOccupied;
-                                const isUnavailable = inPast || isTaken || outOfHours;
+                            <div className="bg-slate-800/60 border border-slate-700/60 rounded-xl p-4 mb-6 flex gap-3 items-start">
+                              <Calendar size={18} className="text-slate-400 shrink-0 mt-0.5" />
+                              <p className="text-sm text-slate-400 leading-relaxed">
+                                Book the same court(s) and time on chosen weekdays across a date range — e.g. every Tuesday and Wednesday, 6:00 PM–8:00 PM, for a month.
+                              </p>
+                            </div>
+                            
+                            <div className="grid sm:grid-cols-2 gap-4 mb-5">
+                              <div>
+                                <label className="label text-slate-400 font-medium mb-2 block">Start Date</label>
+                                <div className="relative">
+                                  <input
+                                    type="date"
+                                    className="input-field"
+                                    min={minDate}
+                                    max={maxDate}
+                                    value={form.date}
+                                    onChange={(e) => {
+                                      const d = e.target.value;
+                                      if (!d) return;
+                                      const day = new Date(d).getDay();
+                                      setForm(f => {
+                                        const next = { ...f, date: d, timeSlot: "", customStartTime: "" };
+                                        if (f.bookingMode === "recurring" && !f.recurringDays.includes(day)) {
+                                          next.recurringDays = [day];
+                                        }
+                                        return next;
+                                      });
+                                    }}
+                                  />
+                                </div>
+                              </div>
+                              <div>
+                                <label className="label text-slate-400 font-medium mb-2 block">End Date</label>
+                                <div className="relative">
+                                  <input
+                                    type="date"
+                                    className="input-field"
+                                    min={form.date}
+                                    value={form.recurrenceEnd}
+                                    onChange={(e) => setForm({ ...form, recurrenceEnd: e.target.value })}
+                                  />
+                                </div>
+                              </div>
+                            </div>
+                            
+                            <div className="mb-6">
+                              <label className="text-[13px] text-slate-400 font-medium mb-2 block tracking-wide">Or set repeat duration</label>
+                              <div className="flex gap-3">
+                                <input 
+                                  type="number"
+                                  min="1"
+                                  className="w-20 bg-slate-800/60 border border-slate-700/80 text-white rounded-xl text-center py-2.5 focus:outline-none focus:border-green-500/50 transition-colors"
+                                  value={form.repeatDurationValue}
+                                  onChange={e => setForm({...form, repeatDurationValue: Number(e.target.value)})}
+                                />
+                                <select 
+                                  className="flex-1 bg-slate-800/60 border border-slate-700/80 text-white rounded-xl px-4 py-2.5 appearance-none focus:outline-none focus:border-green-500/50 transition-colors"
+                                  value={form.repeatDurationUnit}
+                                  onChange={e => setForm({...form, repeatDurationUnit: e.target.value})}
+                                  style={{
+                                    backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='%2394a3b8'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M19 9l-7 7-7-7'%3E%3C/path%3E%3C/svg%3E")`,
+                                    backgroundRepeat: 'no-repeat',
+                                    backgroundPosition: 'right 1rem center',
+                                    backgroundSize: '1rem'
+                                  }}
+                                >
+                                  <option value="weeks">Week(s)</option>
+                                  <option value="months">Month(s)</option>
+                                  <option value="years">Year(s)</option>
+                                </select>
+                                <button 
+                                  type="button"
+                                  className="bg-slate-800/80 hover:bg-slate-700 text-white font-medium px-6 py-2.5 rounded-xl transition-colors border border-slate-700/80"
+                                  onClick={() => {
+                                    const start = new Date(form.date);
+                                    let end = start;
+                                    if (form.repeatDurationUnit === "weeks") {
+                                      end = addDays(start, form.repeatDurationValue * 7);
+                                    } else if (form.repeatDurationUnit === "months") {
+                                      end.setMonth(end.getMonth() + form.repeatDurationValue);
+                                    } else if (form.repeatDurationUnit === "years") {
+                                      end.setFullYear(end.getFullYear() + form.repeatDurationValue);
+                                    }
+                                    setForm(f => ({ ...f, recurrenceEnd: format(end, "yyyy-MM-dd") }));
+                                  }}
+                                >
+                                  Apply
+                                </button>
+                              </div>
+                            </div>
 
-                                return (
+                            <div className="mb-6">
+                              <label className="label text-slate-400 font-medium">Days of the Week</label>
+                              <div className="flex flex-wrap gap-2">
+                                {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((day, idx) => (
                                   <button
-                                    key={slot}
+                                    key={day}
                                     type="button"
-                                    disabled={isUnavailable}
-                                    onClick={() => setForm({ ...form, timeSlot: slot })}
-                                    className={`py-2.5 px-3 rounded-xl text-xs font-medium transition-all ${isUnavailable ? "bg-red-500/10 border border-red-500/20 text-red-400/50 cursor-not-allowed" :
-                                      form.timeSlot === slot ? "bg-green-500 text-slate-950 glow-green" :
-                                        "bg-slate-800 text-slate-400 hover:bg-slate-700 hover:text-white border border-slate-700"
-                                      }`}
+                                    onClick={() => {
+                                      setForm(f => {
+                                        const days = f.recurringDays.includes(idx)
+                                          ? f.recurringDays.filter(d => d !== idx)
+                                          : [...f.recurringDays, idx];
+                                        return { ...f, recurringDays: days.length > 0 ? days : [idx] };
+                                      });
+                                    }}
+                                    className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors border ${
+                                      form.recurringDays.includes(idx)
+                                        ? "bg-green-500 text-slate-900 border-green-500"
+                                        : "bg-transparent text-slate-400 hover:bg-slate-800 border-slate-700"
+                                    }`}
                                   >
-                                    {slot}
-                                    {isSlotOccupied && <div className="text-[10px] leading-tight mt-0.5">Booked</div>}
-                                    {isOverlap && !isSlotOccupied && <div className="text-[10px] leading-tight mt-0.5">Conflicts</div>}
-                                    {inPast && !isSlotOccupied && <div className="text-[10px] leading-tight mt-0.5">Not Available</div>}
+                                    {day}
                                   </button>
-                                );
-                              })}
+                                ))}
+                              </div>
                             </div>
-                            <div className="text-xs text-slate-500 mt-3">
-                              <p>Booked = this time slot is already reserved. Conflicts = this start time would overlap an existing booking for the selected duration.</p>
+                            
+                            <div className="grid sm:grid-cols-2 gap-4 mb-2">
+                              <div>
+                                <label className="label text-slate-400 font-medium mb-2 block">Start Time</label>
+                                <div className="relative">
+                                  <select
+                                    className="input-field appearance-none py-3"
+                                    value={form.timeSlot}
+                                    onChange={(e) => setForm({ ...form, timeSlot: e.target.value })}
+                                  >
+                                    <option value="" disabled>Select</option>
+                                    {TIME_SLOTS.map((slot) => {
+                                      const inPast = isSlotInPast(form.date, slot);
+                                      const outOfHours = !isSlotWithinCourtHours(slot, actualDuration, court);
+                                      return (
+                                        <option key={slot} value={slot} disabled={inPast || outOfHours}>
+                                          {slot} {inPast ? "(Past)" : ""} {outOfHours ? "(Closed)" : ""}
+                                        </option>
+                                      );
+                                    })}
+                                  </select>
+                                  <Clock size={16} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" />
+                                </div>
+                              </div>
+                              <div>
+                                <label className="label text-slate-400 font-medium mb-2 block">End Time</label>
+                                <div className="relative">
+                                  <select
+                                    className="input-field appearance-none py-3"
+                                    value={form.duration}
+                                    onChange={(e) => setForm({ ...form, duration: e.target.value === "Custom" ? "Custom" : Number(e.target.value) })}
+                                  >
+                                    {DURATIONS.map((d) => {
+                                      let label = d === "Custom" ? "Custom" : `${d} hr`;
+                                      if (d !== "Custom" && form.timeSlot) {
+                                        const parts = form.timeSlot.match(/(\d+):(\d+)\s+(AM|PM)/i);
+                                        if (parts) {
+                                            let h = parseInt(parts[1], 10);
+                                            let m = parts[2];
+                                            let ampm = parts[3];
+                                            if (h === 12) h = 0;
+                                            if (ampm.toUpperCase() === "PM") h += 12;
+                                            const startMs = h * 60 + parseInt(m, 10);
+                                            const endMs = startMs + (d * 60);
+                                            let endH = Math.floor(endMs / 60);
+                                            const endM = endMs % 60;
+                                            let endAMPM = "AM";
+                                            if (endH >= 24) endH -= 24;
+                                            if (endH >= 12) {
+                                              endAMPM = "PM";
+                                              if (endH > 12) endH -= 12;
+                                            }
+                                            if (endH === 0) endH = 12;
+                                            label = `${endH.toString().padStart(2, '0')}:${endM.toString().padStart(2, '0')} ${endAMPM}`;
+                                        }
+                                      }
+                                      return <option key={d} value={d}>{label}</option>
+                                    })}
+                                  </select>
+                                  <Clock size={16} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" />
+                                </div>
+                                {form.duration === "Custom" && (
+                                  <input
+                                    type="time"
+                                    className="input-field mt-2"
+                                    value={form.customEndTime}
+                                    onChange={e => setForm({...form, customEndTime: e.target.value})}
+                                  />
+                                )}
+                              </div>
                             </div>
+                            {actualTimeSlot && actualDuration && (
+                              <div className="text-sm text-slate-400 mb-6">
+                                Each session: <span className="text-green-400 font-medium">{actualDuration} hr</span> 
+                              </div>
+                            )}
+                            
+                            {sessionPreviewList.length > 0 && (
+                              <div className="mt-8 border-t border-slate-800 pt-6">
+                                <div className="flex justify-between items-end mb-4">
+                                  <h4 className="text-white font-medium text-sm">Session Preview</h4>
+                                  <div className="text-xs text-slate-400">
+                                    <span className="text-green-400 font-medium">{sessionPreviewList.filter(s => s.isAvailable).length}</span> of {sessionPreviewList.length} available
+                                  </div>
+                                </div>
+                                
+                                {previewLoading ? (
+                                  <div className="flex justify-center items-center py-6">
+                                    <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-slate-500"></div>
+                                  </div>
+                                ) : (
+                                  <div className="space-y-2 max-h-60 overflow-y-auto pr-2 custom-scrollbar">
+                                    {sessionPreviewList.map((session, i) => {
+                                      const dateObj = new Date(session.date);
+                                      const displayDate = dateObj.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
+                                      return (
+                                        <div key={i} className={`flex justify-between items-center p-3 rounded-xl border ${
+                                          session.isAvailable === null ? 'bg-transparent border-slate-700/50' : (session.isAvailable ? 'bg-transparent border-slate-700/50' : 'bg-orange-500/5 border-orange-500/20')
+                                        }`}>
+                                          <div>
+                                            <div className="text-sm text-white">{displayDate}</div>
+                                            {(session.isAvailable === false || session.isAvailable === null) && <div className="text-xs text-slate-500 mt-0.5">{session.reason}</div>}
+                                          </div>
+                                          <div className={`text-sm font-medium ${session.isAvailable === null ? 'text-slate-500' : (session.isAvailable ? 'text-green-400' : 'text-orange-400')}`}>
+                                            {session.isAvailable === null ? 'Pending Info' : (session.isAvailable ? 'Available' : 'Booked')}
+                                          </div>
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                )}
+                              </div>
+                            )}
                           </>
-                        )}
-
-                        {calculatedEndTime && (
-                          <div className="mt-4 p-3 rounded-lg bg-slate-800/50 border border-slate-700 flex items-center gap-2">
-                            <Clock size={16} className="text-cyan-400" />
-                            <span className="text-slate-300 text-sm">Calculated End Time:</span>
-                            <strong className="text-white">{calculatedEndTime}</strong>
-                          </div>
                         )}
                       </>
                     )}
@@ -1504,7 +1951,7 @@ export default function Book() {
                 <div className="space-y-3 text-sm">
                   <div>
                     <div className="text-slate-500 text-xs mb-1">Court</div>
-                    <div className="text-white font-medium">{court?.name ?? "—"}</div>
+                    <div className="text-white font-medium">{selectedCourtsList.length > 0 ? selectedCourtsList.map(c => c.name).join(", ") : "—"}</div>
                     {court && (
                       <div className="flex gap-2 mt-1">
                         <span
@@ -1521,12 +1968,24 @@ export default function Book() {
                     )}
                   </div>
 
-                  {form.date && (
+                  {form.bookingMode === "recurring" ? (
+                    <div>
+                      <div className="text-slate-500 text-xs mb-1">Schedule</div>
+                      <div className="text-white font-medium">
+                        {form.recurringDays.map(d => ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][d]).join(", ")}
+                      </div>
+                      <div className="text-slate-300 text-xs mt-1">
+                        {form.date} to {form.recurrenceEnd}
+                      </div>
+                      <div className="text-green-400 mt-2">{form.timeSlot || "Not selected"}</div>
+                      <div className="text-slate-400 text-xs">{actualDuration} {actualDuration === 1 ? "hour" : "hours"}</div>
+                    </div>
+                  ) : form.date && (
                     <div>
                       <div className="text-slate-500 text-xs mb-1">Date & Time</div>
                       <div className="text-white">{form.date}</div>
                       <div className="text-green-400">{form.timeSlot || "Not selected"}</div>
-                      <div className="text-slate-400 text-xs">{form.duration} {form.duration === 1 ? "hour" : "hours"}</div>
+                      <div className="text-slate-400 text-xs">{actualDuration} {actualDuration === 1 ? "hour" : "hours"}</div>
                     </div>
                   )}
 
@@ -1559,12 +2018,12 @@ export default function Book() {
 
                 <div className="border-t border-slate-800 mt-4 pt-4 space-y-2 text-sm">
                   <div className="flex justify-between text-slate-400">
-                    <span>Court ({form.duration}hr)</span>
+                    <span>Court ({actualDuration}hr) {sessionCount > 1 ? `× ${sessionCount}` : ''}</span>
                     <span>₱{courtTotal}</span>
                   </div>
                   {equipmentTotal > 0 && (
                     <div className="flex justify-between text-slate-400">
-                      <span>Equipment</span>
+                      <span>Equipment {sessionCount > 1 ? `× ${sessionCount}` : ''}</span>
                       <span>₱{equipmentTotal}</span>
                     </div>
                   )}
