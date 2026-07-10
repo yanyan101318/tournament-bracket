@@ -5,7 +5,7 @@
   "author": "Pickleball Admin",
   "private": true,
   "main": "electron.js",
-  "homepage": ".",
+  "homepage": "/",
   "dependencies": {
     "@testing-library/dom": "^10.4.1",
     "@testing-library/jest-dom": "^6.9.1",
